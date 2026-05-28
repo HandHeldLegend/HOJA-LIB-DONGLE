@@ -65,6 +65,16 @@ typedef enum
     DONGLE_PID_STATUS, // Packet containing dongle_status_u data
 } dongle_pid_t;
 
+#pragma pack(push, 1)
+typedef struct
+{
+    uint8_t mode;
+    uint16_t id;
+    uint16_t vid;
+    uint16_t pid;
+} dongle_wake_s;
+#pragma pack(pop)
+
 typedef struct
 {
     uint16_t session;   // dongle_session_s 
