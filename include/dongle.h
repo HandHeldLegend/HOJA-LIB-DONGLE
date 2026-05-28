@@ -61,7 +61,8 @@ typedef struct
 typedef enum 
 {
     DONGLE_PID_WAKE = 0, // Wake packet, this is sent when the dongle is awaiting traffic from the gamepad
-    DONGLE_PID_CORE, // Packet containing raw USB data
+    DONGLE_PID_CORE_RELIABLE, // Reliable USB tunnel data (command replies, etc.)
+    DONGLE_PID_CORE_UNRELIABLE, // High-rate input reports
     DONGLE_PID_STATUS, // Packet containing dongle_status_u data
 } dongle_pid_t;
 
