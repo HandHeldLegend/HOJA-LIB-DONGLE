@@ -58,6 +58,14 @@ typedef struct
 
 #define DONGLE_SESSION_S_LEN sizeof(dongle_session_s)
 
+/* Fixed WLAN endpoints — gamepad firmware uses the same values. */
+#define DONGLE_WLAN_PORT 4444u
+#define DONGLE_GAMEPAD_IP0 192u
+#define DONGLE_GAMEPAD_IP1 168u
+#define DONGLE_GAMEPAD_IP2 4u
+#define DONGLE_GAMEPAD_IP3 16u
+#define DONGLE_GAMEPAD_PORT DONGLE_WLAN_PORT
+
 typedef enum 
 {
     DONGLE_PID_WAKE = 0, // Wake packet, this is sent when the dongle is awaiting traffic from the gamepad
@@ -79,7 +87,7 @@ typedef struct
 typedef struct
 {
     uint16_t session;   // dongle_session_s 
-    uint16_t counter;   // Packet counter. 
+    uint16_t ack;       // Reliable packet ACK. 
     uint8_t id;         // dongle_pid_t
     uint16_t len;       // Data container used length
     uint8_t data[64];   // Data container
