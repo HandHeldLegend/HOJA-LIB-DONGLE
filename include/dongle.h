@@ -2,6 +2,7 @@
 #define HOJA_LIB_DONGLE_H
 
 #include <stdint.h>
+#include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,11 +53,34 @@ typedef enum
 typedef struct
 {
     uint16_t mode : 4; // dongle_mode_t
-    uint16_t id : 12;
+    uint16_t id : 12;  // Random session id (gamepad); new value per session / reboot
 } dongle_session_s;
 #pragma pack(pop)
 
 #define DONGLE_SESSION_S_LEN sizeof(dongle_session_s)
+
+/** Pack session bitfield into the 16-bit wire value (pkt->session). */
+static inline uint16_t dongle_session_pack(const dongle_session_s *s)
+{
+    uint16_t v = 0;
+    memcpy(&v, s, sizeof(uint16_t));
+    return v;
+}
+
+/** Unpack pkt->session into dongle_session_s. */
+static inline void dongle_session_unpack(uint16_t packed, dongle_session_s *s)
+{
+    memcpy(s, &packed, sizeof(uint16_t));
+}
+
+#pragma pack(push, 1)
+typedef struct
+{
+    dongle_session_s session; /* mode (4) + session id (12) — must match pkt->session */
+    uint16_t vid;             /* USB vendor id for enumeration */
+    uint16_t pid;             /* USB product id for enumeration */
+} dongle_wake_s;
+#pragma pack(pop)
 
 /* Fixed WLAN endpoints — gamepad firmware uses the same values. */
 #define DONGLE_WLAN_PORT 4444u
@@ -73,16 +97,6 @@ typedef enum
     DONGLE_PID_CORE_UNRELIABLE, // High-rate input reports
     DONGLE_PID_STATUS, // Packet containing dongle_status_u data
 } dongle_pid_t;
-
-#pragma pack(push, 1)
-typedef struct
-{
-    uint8_t mode;
-    uint16_t id;
-    uint16_t vid;
-    uint16_t pid;
-} dongle_wake_s;
-#pragma pack(pop)
 
 typedef struct
 {
