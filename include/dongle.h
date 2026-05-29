@@ -98,6 +98,7 @@ typedef enum
     DONGLE_PID_STATUS, // Packet containing dongle_status_u data
 } dongle_pid_t;
 
+#pragma pack(push, 1)
 typedef struct
 {
     uint16_t session;   // dongle_session_s 
@@ -106,6 +107,7 @@ typedef struct
     uint16_t len;       // Data container used length
     uint8_t data[64];   // Data container
 } dongle_pkt_s;
+#pragma pack(pop)
 
 #ifdef __cplusplus
 }
