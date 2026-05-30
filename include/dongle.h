@@ -10,16 +10,23 @@ extern "C" {
 
 typedef enum
 {
-    DONGLE_CONN_IDLE,
-    DONGLE_CONN_CONNECTED,
-} dongle_connection_t;
+    DONGLE_LINK_DOWN,
+    DONGLE_LINK_UP,
+} dongle_link_status_t;
+
+typedef enum
+{
+    DONGLE_TRANSPORT_IDLE,
+    DONGLE_TRANSPORT_CONNECTED,
+} dongle_transport_status_t;
 
 #pragma pack(push, 1)
 typedef union
 {
     struct
     {
-        uint8_t connection; // dongle_connection_t
+        uint8_t link_status; // dongle_link_status_t
+        uint8_t transport_status; // dongle_transport_status_t;
         uint8_t player_number;
         struct
         {
@@ -76,9 +83,9 @@ static inline void dongle_session_unpack(uint16_t packed, dongle_session_s *s)
 #pragma pack(push, 1)
 typedef struct
 {
-    dongle_session_s session; /* mode (4) + session id (12) — must match pkt->session */
-    uint16_t vid;             /* USB vendor id for enumeration */
-    uint16_t pid;             /* USB product id for enumeration */
+    uint16_t session; // dongle_session_s
+    uint16_t vid;     /* USB vendor id for enumeration */
+    uint16_t pid;     /* USB product id for enumeration */
 } dongle_wake_s;
 #pragma pack(pop)
 
@@ -96,6 +103,8 @@ typedef enum
     DONGLE_PID_CORE_RELIABLE, // Reliable USB tunnel data (command replies, etc.)
     DONGLE_PID_CORE_UNRELIABLE, // High-rate input reports
     DONGLE_PID_STATUS, // Packet containing dongle_status_u data
+    DONGLE_PID_BULK_UNRELIABLE, // Unreliable USB bulk tunnel for webUSB reports
+    DONGLE_PID_CONFIG_RELIABLE, // Reliable USB tunnel data for configuration data
 } dongle_pid_t;
 
 #pragma pack(push, 1)
