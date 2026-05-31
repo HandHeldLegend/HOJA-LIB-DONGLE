@@ -25,7 +25,6 @@ typedef union
 {
     struct
     {
-        uint8_t link_status; // dongle_link_status_t
         uint8_t transport_status; // dongle_transport_status_t;
         uint8_t player_number;
         struct
