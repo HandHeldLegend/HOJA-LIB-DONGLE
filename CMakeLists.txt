@@ -6,6 +6,8 @@
 
 add_library(hoja_lib_dongle STATIC
     ${CMAKE_CURRENT_LIST_DIR}/dongle.c
+    ${CMAKE_CURRENT_LIST_DIR}/dongle_gamepad.c
+    ${CMAKE_CURRENT_LIST_DIR}/dongle_host.c
 )
 
 target_include_directories(hoja_lib_dongle PUBLIC

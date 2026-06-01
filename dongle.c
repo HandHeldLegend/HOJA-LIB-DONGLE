@@ -1,4 +1,8 @@
-#include "dongle.h"
+#include <dongle.h>
+#include <dongle_gamepad.h>
+#include <dongle_host.h>
+
+#include <dongle_crosscore.h>
 
 __attribute__((weak)) void dongle_api_gp_hook_udp_tx(const dongle_pkt_s *out, uint8_t ip[4], uint16_t port)
 {

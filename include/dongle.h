@@ -26,28 +26,32 @@ typedef enum
 } dongle_transport_status_t;
 
 #pragma pack(push, 1)
-typedef union
+typedef struct 
 {
-    struct
+    uint8_t transport_status; // dongle_transport_status_t;
+    uint8_t player_number;
+    union
     {
-        uint8_t transport_status; // dongle_transport_status_t;
-        uint8_t player_number;
         struct
         {
-            uint8_t left;
-            uint8_t right;
-        } rumble;
-        struct 
-        {
-            uint8_t left;
-            uint8_t right;
-        } brake;
+        
+            struct
+            {
+                uint8_t left;
+                uint8_t right;
+            } rumble;
+            struct 
+            {
+                uint8_t left;
+                uint8_t right;
+            } brake;
+        };
+        uint32_t rumble_value;
     };
-    uint64_t value;
-} dongle_status_u;
+} dongle_status_s;
 #pragma pack(pop)
 
-#define DONGLE_STATUS_U_LEN sizeof(dongle_status_u)
+#define DONGLE_STATUS_U_LEN sizeof(dongle_status_s)
 
 typedef enum
 {
@@ -122,6 +126,22 @@ typedef struct
 } dongle_pkt_s;
 #pragma pack(pop)
 
+#pragma pack(push, 1)
+typedef struct
+{
+    dongle_pkt_s pkt;
+    uint8_t ip[4];
+    uint16_t port;
+} dongle_udp_frame_s;
+#pragma pack(pop)
+
+typedef struct
+{
+    bool rumble;
+    bool player_number;
+    bool transport_status;
+} dongle_status_evt_subscription_s;
+
 typedef struct
 {
     uint8_t pin[4]; // 4 digit pin, each number 0-9 used to generate the SSID+Password (HOJA_DONGLE_XXXX)
@@ -131,6 +151,7 @@ typedef struct
 {
     uint8_t pin[4]; // 4 digit pin, each number 0-9, used to determine the SSID+Password (HOJA_DONGLE_XXXX)
     dongle_mode_t mode;
+    dongle_status_evt_subscription_s evt;
     uint16_t vid;
     uint16_t pid;
 } dongle_cfg_gp_s;
@@ -203,7 +224,10 @@ void dongle_api_gp_hook_connect(const char *ssid, const char *pw);
 
 // Return the system time in microseconds
 uint64_t dongle_api_hook_time_us(void);
+// Get random 16 bit value
+uint16_t dongle_api_hook_rand_16u(void);
 
+void dongle_api_gp_hook_set_link(bool connected);
 void dongle_api_gp_hook_set_rumble(uint8_t rumble_left, uint8_t rumble_right, uint8_t brake_left, uint8_t brake_right);
 void dongle_api_gp_hook_set_transport(bool connected);
 void dongle_api_gp_hook_set_player(uint8_t player_number);
