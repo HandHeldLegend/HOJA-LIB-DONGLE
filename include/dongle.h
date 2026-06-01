@@ -3,9 +3,14 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#ifndef DONGLE_LIB_DEBUG_LOG
+#define DONGLE_LIB_DEBUG_LOG 1
 #endif
 
 typedef enum
@@ -116,6 +121,98 @@ typedef struct
     uint8_t data[64];   // Data container
 } dongle_pkt_s;
 #pragma pack(pop)
+
+typedef struct
+{
+    uint8_t pin[4]; // 4 digit pin, each number 0-9 used to generate the SSID+Password (HOJA_DONGLE_XXXX)
+} dongle_cfg_host_s;
+
+typedef struct
+{
+    uint8_t pin[4]; // 4 digit pin, each number 0-9, used to determine the SSID+Password (HOJA_DONGLE_XXXX)
+    dongle_mode_t mode;
+    uint16_t vid;
+    uint16_t pid;
+} dongle_cfg_gp_s;
+
+/* -------------------------------------------------------------------------- */
+/* HOST API                                                                */
+/* -------------------------------------------------------------------------- */
+
+void dongle_api_host_init(dongle_cfg_host_s *cfg);
+void dongle_api_host_task(void);
+
+// Called by the API when the host needs to bring up its SSID/Password
+void dongle_api_host_hook_bringup(const char *ssid, const char *pw);
+
+// Call on the dongle host in your UDP receiving ISR
+// This feeds the packet into the internal queue
+void dongle_api_host_udp_rx(dongle_pkt_s *in);
+
+
+// Call when we recieve outputreports over USB. The API queues these automatically
+void dongle_api_host_add_outputreport(const uint8_t *data, uint16_t len);
+// Call to retrieve the most up to date inputreport for USB or other input modes
+bool dongle_api_host_get_inputreport(const uint8_t *data, uint16_t len);
+
+
+// Called by the API when it has a dongle_pkt_s ready to transmit
+void dongle_api_host_hook_udp_tx(dongle_pkt_s *out, uint8_t ip[4], uint16_t port);
+// Called by the API when the link status changes
+void dongle_api_host_hook_linkstatus(dongle_link_status_t status);
+
+// Call on our transport layer to mark when
+// a packet was sent to help gate the packet
+// timing
+void dongle_api_host_pump_mark_sent(void);
+// Call to set rumble status
+void dongle_api_host_set_rumble(uint8_t rumble_left, uint8_t rumble_right, uint8_t brake_left, uint8_t brake_right);
+// Call to set transport connected status
+void dongle_api_host_set_transport(bool connected);
+// Call to set player number
+void dongle_api_host_set_player(uint8_t player_number);
+
+/* -------------------------------------------------------------------------- */
+/* GAMEPAD API                                                                */
+/* -------------------------------------------------------------------------- */
+
+void dongle_api_gp_init(dongle_cfg_gp_s *cfg);
+void dongle_api_gp_task(void);
+
+// Call on the gamepad in your UDP receiving ISR
+void dongle_api_gp_udp_rx(dongle_pkt_s *in);
+// Called by the API when there's a dongle_pkt_s that is ready to transmit
+void dongle_api_gp_hook_udp_tx(const dongle_pkt_s *out, uint8_t ip[4], uint16_t port);
+
+// This is called by the API task loop when it needs to form the next packet
+// It's up to the gamepad to decide what will be treated as reliable or not
+bool dongle_api_gp_hook_get_inputreport(const uint8_t *data, uint16_t *len, bool *reliable);
+// The API calls this when there is an outputreport data that must be forwarded
+void dongle_api_gp_hook_set_outputreport(const uint8_t *data, uint16_t len);
+
+// Call this when the gamepad connects
+void dongle_api_gp_onconnect(void);
+// Call this when the gamepad disconnects
+void dongle_api_gp_ondisconnect(void);
+// Call this when the gamepad connection attempt fails
+void dongle_api_gp_onconnectfail(void);
+
+// API calls this when we are ready to attempt
+// a connection (ASYNC, handled by api task)
+void dongle_api_gp_hook_connect(const char *ssid, const char *pw);
+
+// Return the system time in microseconds
+uint64_t dongle_api_hook_time_us(void);
+
+void dongle_api_gp_hook_set_rumble(uint8_t rumble_left, uint8_t rumble_right, uint8_t brake_left, uint8_t brake_right);
+void dongle_api_gp_hook_set_transport(bool connected);
+void dongle_api_gp_hook_set_player(uint8_t player_number);
+
+void dongle_api_hook_set_ip(uint8_t ip[4], uint8_t mask[4], uint8_t gw[4]);
+void dongle_api_hook_port_bind(uint16_t port);
+void dongle_api_hook_port_unbind(void);
+void dongle_api_hook_bringup(void);
+void dongle_api_hook_teardown(void);
 
 #ifdef __cplusplus
 }
