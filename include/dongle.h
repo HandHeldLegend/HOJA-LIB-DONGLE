@@ -13,8 +13,18 @@ extern "C" {
 #define DONGLE_LIB_DEBUG_LOG 1
 #endif
 
+#ifndef DONGLE_LIB_DEBUG_GAMEPADSTATS
+#define DONGLE_LIB_DEBUG_GAMEPADSTATS 0
+#endif
+
+#define DONGLE_DEFAULT_WLAN_SSID            "HOJA_WLAN_1234"
+#define DONGLE_DEFAULT_WLAN_PASSWORD        "HOJA_1234"
+
+
+
 typedef enum
 {
+    DONGLE_LINK_UNDEFINED,
     DONGLE_LINK_DOWN,
     DONGLE_LINK_UP,
 } dongle_link_status_t;
@@ -98,12 +108,25 @@ typedef struct
 #pragma pack(pop)
 
 /* Fixed WLAN endpoints — gamepad firmware uses the same values. */
-#define DONGLE_WLAN_PORT 4444u
-#define DONGLE_GAMEPAD_IP0 192u
-#define DONGLE_GAMEPAD_IP1 168u
-#define DONGLE_GAMEPAD_IP2 4u
-#define DONGLE_GAMEPAD_IP3 16u
+#define DONGLE_WLAN_PORT    4444u
+
+#define DONGLE_GAMEPAD_IP0  192u
+#define DONGLE_GAMEPAD_IP1  168u
+#define DONGLE_GAMEPAD_IP2  4u
+#define DONGLE_GAMEPAD_IP3  16u
 #define DONGLE_GAMEPAD_PORT DONGLE_WLAN_PORT
+
+/* The dongle (AP) lives at 192.168.4.1 and listens on DONGLE_WLAN_PORT. */
+#define DONGLE_HOST_IP0      192u
+#define DONGLE_HOST_IP1      168u
+#define DONGLE_HOST_IP2      4u
+#define DONGLE_HOST_IP3      1u
+#define DONGLE_HOST_PORT     DONGLE_WLAN_PORT
+
+#define DONGLE_NETMASK0        255
+#define DONGLE_NETMASK1        255
+#define DONGLE_NETMASK2        255
+#define DONGLE_NETMASK3        0
 
 typedef enum 
 {
@@ -154,89 +177,15 @@ typedef struct
     dongle_status_evt_subscription_s evt;
     uint16_t vid;
     uint16_t pid;
-} dongle_cfg_gp_s;
+} dongle_cfg_gamepad_s;
 
 /* -------------------------------------------------------------------------- */
-/* HOST API                                                                */
+/* UTILS API                                                                  */
 /* -------------------------------------------------------------------------- */
 
-void dongle_api_host_init(dongle_cfg_host_s *cfg);
-void dongle_api_host_task(void);
+uint64_t dongle_api_hook_get_time_us_u64(void);
 
-// Called by the API when the host needs to bring up its SSID/Password
-void dongle_api_host_hook_bringup(const char *ssid, const char *pw);
-
-// Call on the dongle host in your UDP receiving ISR
-// This feeds the packet into the internal queue
-void dongle_api_host_udp_rx(dongle_pkt_s *in);
-
-
-// Call when we recieve outputreports over USB. The API queues these automatically
-void dongle_api_host_add_outputreport(const uint8_t *data, uint16_t len);
-// Call to retrieve the most up to date inputreport for USB or other input modes
-bool dongle_api_host_get_inputreport(const uint8_t *data, uint16_t len);
-
-
-// Called by the API when it has a dongle_pkt_s ready to transmit
-void dongle_api_host_hook_udp_tx(dongle_pkt_s *out, uint8_t ip[4], uint16_t port);
-// Called by the API when the link status changes
-void dongle_api_host_hook_linkstatus(dongle_link_status_t status);
-
-// Call on our transport layer to mark when
-// a packet was sent to help gate the packet
-// timing
-void dongle_api_host_pump_mark_sent(void);
-// Call to set rumble status
-void dongle_api_host_set_rumble(uint8_t rumble_left, uint8_t rumble_right, uint8_t brake_left, uint8_t brake_right);
-// Call to set transport connected status
-void dongle_api_host_set_transport(bool connected);
-// Call to set player number
-void dongle_api_host_set_player(uint8_t player_number);
-
-/* -------------------------------------------------------------------------- */
-/* GAMEPAD API                                                                */
-/* -------------------------------------------------------------------------- */
-
-void dongle_api_gp_init(dongle_cfg_gp_s *cfg);
-void dongle_api_gp_task(void);
-
-// Call on the gamepad in your UDP receiving ISR
-void dongle_api_gp_udp_rx(dongle_pkt_s *in);
-// Called by the API when there's a dongle_pkt_s that is ready to transmit
-void dongle_api_gp_hook_udp_tx(const dongle_pkt_s *out, uint8_t ip[4], uint16_t port);
-
-// This is called by the API task loop when it needs to form the next packet
-// It's up to the gamepad to decide what will be treated as reliable or not
-bool dongle_api_gp_hook_get_inputreport(const uint8_t *data, uint16_t *len, bool *reliable);
-// The API calls this when there is an outputreport data that must be forwarded
-void dongle_api_gp_hook_set_outputreport(const uint8_t *data, uint16_t len);
-
-// Call this when the gamepad connects
-void dongle_api_gp_onconnect(void);
-// Call this when the gamepad disconnects
-void dongle_api_gp_ondisconnect(void);
-// Call this when the gamepad connection attempt fails
-void dongle_api_gp_onconnectfail(void);
-
-// API calls this when we are ready to attempt
-// a connection (ASYNC, handled by api task)
-void dongle_api_gp_hook_connect(const char *ssid, const char *pw);
-
-// Return the system time in microseconds
-uint64_t dongle_api_hook_time_us(void);
-// Get random 16 bit value
-uint16_t dongle_api_hook_rand_16u(void);
-
-void dongle_api_gp_hook_set_link(bool connected);
-void dongle_api_gp_hook_set_rumble(uint8_t rumble_left, uint8_t rumble_right, uint8_t brake_left, uint8_t brake_right);
-void dongle_api_gp_hook_set_transport(bool connected);
-void dongle_api_gp_hook_set_player(uint8_t player_number);
-
-void dongle_api_hook_set_ip(uint8_t ip[4], uint8_t mask[4], uint8_t gw[4]);
-void dongle_api_hook_port_bind(uint16_t port);
-void dongle_api_hook_port_unbind(void);
-void dongle_api_hook_bringup(void);
-void dongle_api_hook_teardown(void);
+uint16_t dongle_api_hook_get_rand_u16(void);
 
 #ifdef __cplusplus
 }
