@@ -1,6 +1,14 @@
 #include <dongle.h>
 #include <dongle_gamepad.h>
-#include <dongle_crosscore.h>
+#include <dongle_log.h>
+
+/*
+ * Compile-time guard from the guide's bring-up checklist (§14): with the
+ * mandatory #pragma pack(push,1) the wire struct is exactly 71 bytes
+ * (2 + 2 + 1 + 2 + 64). If padding sneaks in, the dongle's length filter
+ * silently drops every datagram we send.
+ */
+_Static_assert(sizeof(dongle_pkt_s) == 71, "dongle_pkt_s must be packed to 71 bytes");
 
 static uint8_t _dongle_gamepad_address[4] = {DONGLE_GAMEPAD_IP0, DONGLE_GAMEPAD_IP1, DONGLE_GAMEPAD_IP2, DONGLE_GAMEPAD_IP3};
 static uint8_t _dongle_host_address[4] = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONGLE_HOST_IP2, DONGLE_HOST_IP3};
@@ -21,10 +29,11 @@ typedef enum
 
 typedef struct
 {
-    uint32_t rx_dropped;
-    uint32_t rx_packets;
-    uint32_t last_ms;
-    uint32_t last_dropped;
+    uint32_t rx_packets;    /* datagrams received this interval */
+    uint32_t input_reports; /* unreliable input reports sent this interval */
+    uint32_t rx_dropped;    /* free-running drop counter (reserved for FIFO mode) */
+    uint32_t last_ms;       /* timestamp of the last stats print */
+    uint32_t last_dropped;  /* rx_dropped snapshot at the last print */
 } dongle_gamepad_logging_sm;
 
 typedef struct
@@ -43,55 +52,72 @@ typedef struct
 
     dongle_gamepad_connphase_t wlan_connphase;
 
+    /* USB identity / personality advertised to the dongle in WAKE replies. */
+    dongle_mode_t mode;
     uint16_t pid;
     uint16_t vid;
+
     bool rx_got;
+
+    dongle_gamepad_logging_sm logging;
 } dongle_gamepad_sm;
 
 static dongle_gamepad_sm _gp = {0};
 
 /* -------------------------------------------------------------------------- */
-/* GAMEPAD HOOKS                                                              */
+/* GAMEPAD HOOKS (weak defaults)                                              */
 /* -------------------------------------------------------------------------- */
 
 // Implement WiFI Link Status Checking
-__attribute__((weak)) dongle_link_status_t dongle_api_gamepad_hook_link_up(void);
+__attribute__((weak)) dongle_link_status_t dongle_api_gamepad_hook_link_up(void)
+{
+    return DONGLE_LINK_DOWN;
+}
 
 // Implement setting static IP
 __attribute__((weak)) bool dongle_api_gamepad_hook_apply_static_ip(uint8_t addr[4], uint8_t mask[4], uint8_t gateway[4])
 {
-
+    (void)addr;
+    (void)mask;
+    (void)gateway;
+    return false;
 }
 
 // Implement SSID connection
 __attribute__((weak)) void dongle_api_gamepad_hook_connect_async(const char *ssid, const char *pw)
 {
-
+    (void)ssid;
+    (void)pw;
 }
 
 // Implement UDP transmission
 __attribute__((weak)) void dongle_api_gamepad_hook_udp_tx(const dongle_pkt_s *pkt, uint8_t ip[4], uint16_t port)
 {
-
+    (void)pkt;
+    (void)ip;
+    (void)port;
 }
 
 // Implement obtaining the latest input report
-__attribute__((weak)) bool dongle_api_gamepad_hook_get_inputreport(const uint8_t data[64], uint16_t *len, bool *reliable)
+__attribute__((weak)) bool dongle_api_gamepad_hook_get_inputreport(uint8_t data[64], uint16_t *len, bool *reliable)
 {
-
+    (void)data;
+    (void)len;
+    (void)reliable;
+    return false;
 }
 
 // Implement forwarding output reports
 __attribute__((weak)) void dongle_api_gamepad_hook_set_outputreport(const uint8_t data[64], uint16_t len)
 {
-
+    (void)data;
+    (void)len;
 }
-
 
 // Implement player number change callback
 __attribute__((weak)) void dongle_api_gamepad_hook_set_player(uint8_t player_number)
 {
-
+    (void)player_number;
 }
 
 // Implement transport status callback
@@ -119,12 +145,43 @@ __attribute__((weak)) void dongle_api_gamepad_hook_reset_network(void)
 /* GAMEPAD APP                                                                */
 /* -------------------------------------------------------------------------- */
 
+/* Pick a fresh 12-bit session id (1..0xFFF). A new id tells the dongle that a
+ * new client attached or the gamepad rebooted, forcing a clean core_init. */
+static uint16_t _gamepad_new_session_id(void)
+{
+    uint16_t sid = dongle_api_hook_get_rand_u16() & 0xFFFu;
+    if (sid == 0)
+    {
+        sid = 1;
+    }
+    return sid;
+}
+
+/* Refresh the cached WAKE body for the current mode / session / USB identity.
+ * A new random session id is chosen here so every (re)connection forces the
+ * dongle to re-initialize its console core (guide §4: never reuse the id). */
+static void _gamepad_refresh_wake(void)
+{
+    _gp.session.mode = (uint16_t)_gp.mode;
+    _gp.session.id = _gamepad_new_session_id();
+
+    /*
+     * dongle_wake_s.session is the PACKED uint16_t (identical to pkt->session),
+     * NOT a nested dongle_session_s struct (guide §4). Pack it explicitly.
+     */
+    _gp.wake.session = dongle_session_pack(&_gp.session);
+    _gp.wake.vid = _gp.vid;
+    _gp.wake.pid = _gp.pid;
+
+    DONGLE_LOGF("[DGP] New session id 0x%03X (mode %u, vid 0x%04X, pid 0x%04X)\n",
+                _gp.session.id, (unsigned)_gp.session.mode, _gp.vid, _gp.pid);
+}
+
 static void _gamepad_reset(uint64_t now_us)
 {
     (void)now_us;
 
-    _gp.session = (dongle_session_s){0};
-    _gp.wake = (dongle_wake_s){0};
+    /* Preserve the configured identity (mode/vid/pid); reset only link state. */
     _gp.status = (dongle_status_s){0};
 
     _gp.last_reliable_ack = 0;
@@ -136,9 +193,10 @@ static void _gamepad_reset(uint64_t now_us)
     _gp.wlan_connection_deadline_us = 0;
     _gp.wlan_connphase = DONGLE_GAMEPAD_CONNPHASE_DOWN;
 
-    _gp.pid = 0;
-    _gp.vid = 0;
     _gp.rx_got = false;
+
+    /* Fresh session id for the next connection (guide §4: never reuse). */
+    _gamepad_refresh_wake();
 
     // Notify upper layers to reset their network stack/state
     dongle_api_gamepad_hook_reset_network();
@@ -275,7 +333,20 @@ static void _gamepad_build_input_reply(dongle_pkt_s *tx)
 
     if(dongle_api_gamepad_hook_get_inputreport(report, &len, &reliable))
     {
-        if(reliable) tx->id = DONGLE_PID_CORE_RELIABLE;
+        if(reliable)
+        {
+            tx->id = DONGLE_PID_CORE_RELIABLE;
+        }
+        else
+        {
+            /* Count steady-state unreliable input reports for the stats line. */
+            _gp.logging.input_reports++;
+        }
+
+        if(len > sizeof(tx->data))
+        {
+            len = sizeof(tx->data);
+        }
 
         tx->len = len;
         memcpy(tx->data, report, len);
@@ -293,10 +364,7 @@ static void _gamepad_build_wake_reply(dongle_pkt_s *tx)
     tx->len     = (uint16_t)sizeof(dongle_wake_s);
     memcpy(tx->data, &_gp.wake, sizeof(dongle_wake_s));
 
-    //if (!_wlan_link_up)
-    //{
-    //    printf("[WLAN] Replying to WAKE beacon (session 0x%03X)\n", _wlan_session.id);
-    //}
+    DONGLE_LOGF("[DGP] Replying to WAKE beacon (session 0x%03X)\n", _gp.session.id);
 }
 
 static void _gamepad_process_packet(const dongle_pkt_s *rx)
@@ -337,7 +405,7 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
          * phase, so re-arm WAKE handling for the next beacon run. */
         _gp.wake_replied = false;
 
-        /* A STATUS payload is exactly sizeof(dongle_status_s) (== 8) bytes. */
+        /* A STATUS payload is exactly sizeof(dongle_status_s) bytes. */
         if (rx->len == sizeof(dongle_status_s))
         {
             _gamepad_apply_status((const dongle_status_s *)rx->data);
@@ -353,7 +421,7 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
          * any reply it queues is popped by the input report build below and
          * delivered in this same reply. rx->ack was already echoed into tx.ack
          * above, which retires the dongle's inflight reliable packet (guide §9).
-         * ns_api_output_tunnel() is effectively idempotent on resends. */
+         * The output handler should be idempotent on resends. */
         if (rx->len > 0)
         {
             /* Stop-and-wait dedup: the dongle resends the same CORE_RELIABLE
@@ -390,38 +458,82 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
     }
 }
 
-static uint16_t _gamepad_new_session_id(void)
+/* Print a single throughput line once per DONGLE_GAMEPAD_REPORT_LOG_INTERVAL_MS.
+ * Compiled out unless DONGLE_LIB_DEBUG_GAMEPADSTATS is enabled. */
+static void _gamepad_report_stats(uint64_t now_us)
 {
-    uint16_t sid = dongle_api_hook_get_rand_u16() & 0xFFFu;
-    if(sid==0)
+#if defined(DONGLE_LIB_DEBUG_GAMEPADSTATS) && (DONGLE_LIB_DEBUG_GAMEPADSTATS == 1)
+    uint32_t now_ms = (uint32_t)(now_us / 1000u);
+    uint32_t elapsed = now_ms - _gp.logging.last_ms;
+    if (elapsed < DONGLE_GAMEPAD_REPORT_LOG_INTERVAL_MS)
     {
-        sid=1;
+        return;
     }
-    return sid;
+
+    uint32_t rx_packets = _gp.logging.rx_packets;
+    _gp.logging.rx_packets = 0;
+    uint32_t reports = _gp.logging.input_reports;
+    _gp.logging.input_reports = 0;
+    _gp.logging.last_ms = now_ms;
+
+    uint32_t dropped_total = _gp.logging.rx_dropped;
+    uint32_t dropped = dropped_total - _gp.logging.last_dropped;
+    _gp.logging.last_dropped = dropped_total;
+
+    uint32_t rx_rate = (elapsed > 0) ? (rx_packets * 1000u) / elapsed : rx_packets;
+    uint32_t report_rate = (elapsed > 0) ? (reports * 1000u) / elapsed : reports;
+
+    DONGLE_LOGF("[DGP] rx %lu pkt/s (from host) | input %lu rep/s (to dongle) | dropped %lu\n",
+                (unsigned long)rx_rate, (unsigned long)report_rate, (unsigned long)dropped);
+#else
+    (void)now_us;
+#endif
 }
 
 /* -------------------------------------------------------------------------- */
 /* GAMEPAD API                                                                */
 /* -------------------------------------------------------------------------- */
 
-
 void dongle_api_gamepad_wlan_init(const dongle_cfg_gamepad_s *cfg)
 {
+    memset(&_gp, 0, sizeof(_gp));
 
+    if (cfg != NULL)
+    {
+        _gp.mode = cfg->mode;
+        _gp.vid = cfg->vid;
+        _gp.pid = cfg->pid;
+    }
+
+    _gp.wlan_link = DONGLE_LINK_UNDEFINED;
+    _gp.wlan_connphase = DONGLE_GAMEPAD_CONNPHASE_DOWN;
+
+    /* Pick the first session id before any traffic flows. */
+    _gamepad_refresh_wake();
 }
 
 void dongle_api_gamepad_udp_rx(const dongle_pkt_s *pkt)
 {
+    if (pkt == NULL)
+    {
+        return;
+    }
 
+    _gp.logging.rx_packets++;
+
+    /* Inline processing: the platform calls this only when a valid, fixed-size
+     * datagram from the dongle endpoint has arrived. At most one reply is
+     * emitted (one TX per RX). */
+    _gamepad_process_packet(pkt);
 }
 
 void dongle_api_gamepad_wlan_task(void)
 {
     uint64_t now_us = dongle_api_hook_get_time_us_u64();
-    // Poll status
+
+    // Poll connection / link state machine
     _gamepad_poll(now_us);
 
-    // Report stats optional
-#if defined(DONGLE_LIB_DEBUG_GAMEPADSTATS) && (DONGLE_LIB_DEBUG_GAMEPADSTATS==1)
-#endif
+    // Report stats (compiled out unless DONGLE_LIB_DEBUG_GAMEPADSTATS == 1)
+    _gamepad_report_stats(now_us);
 }
