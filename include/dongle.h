@@ -9,17 +9,16 @@
 extern "C" {
 #endif
 
-#ifndef DONGLE_LIB_DEBUG_LOG
-#define DONGLE_LIB_DEBUG_LOG 1
-#endif
+//#ifndef DONGLE_LIB_DEBUG_LOG
+//#define DONGLE_LIB_DEBUG_LOG 0
+//#endif
 
-#ifndef DONGLE_LIB_DEBUG_GAMEPADSTATS
-#define DONGLE_LIB_DEBUG_GAMEPADSTATS 0
-#endif
+//#ifndef DONGLE_LIB_DEBUG_GAMEPADSTATS
+//#define DONGLE_LIB_DEBUG_GAMEPADSTATS 0
+//#endif
 
 #define DONGLE_DEFAULT_WLAN_SSID            "HOJA_WLAN_1234"
 #define DONGLE_DEFAULT_WLAN_PASSWORD        "HOJA_1234"
-
 
 
 typedef enum

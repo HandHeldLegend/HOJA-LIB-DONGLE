@@ -57,6 +57,10 @@ typedef struct
     uint16_t pid;
     uint16_t vid;
 
+    /* Which STATUS-derived callback events the app wants delivered. Events with
+     * their flag cleared are parsed but never dispatched to the hooks. */
+    dongle_status_evt_subscription_s evt;
+
     bool rx_got;
 
     dongle_gamepad_logging_sm logging;
@@ -195,6 +199,8 @@ static void _gamepad_reset(uint64_t now_us)
 
     _gp.rx_got = false;
 
+    DONGLE_LOGF("[DGP] Reset link/session state\n");
+
     /* Fresh session id for the next connection (guide §4: never reuse). */
     _gamepad_refresh_wake();
 
@@ -218,6 +224,7 @@ static bool _gamepad_connect_attempt(uint64_t now_us)
     }
 
     // Start async connection
+    DONGLE_LOGF("[DGP] Association attempt (ssid \"%s\")\n", DONGLE_DEFAULT_WLAN_SSID);
     dongle_api_gamepad_hook_connect_async(DONGLE_DEFAULT_WLAN_SSID, DONGLE_DEFAULT_WLAN_PASSWORD);
 
     _gp.wlan_connection_deadline_us = now_us + (DONGLE_GAMEPAD_CONNECTION_FAIL_TIMEOUT_MS*1000);
@@ -247,11 +254,13 @@ static void _gamepad_poll(uint64_t now_us)
                 // Adjust behavior based on prior state
                 if(_gp.wlan_link == DONGLE_LINK_UP)
                 {
+                    DONGLE_LOGF("[DGP] Link DOWN (was UP), resetting\n");
                     _gamepad_reset(now_us);
                     return;
                 }
                 else 
                 {
+                    DONGLE_LOGF("[DGP] Link DOWN, attempting to connect\n");
                     if(_gamepad_connect_attempt(now_us))
                     {
                         _gp.wlan_connphase = DONGLE_GAMEPAD_CONNPHASE_CONNECTING;
@@ -260,6 +269,7 @@ static void _gamepad_poll(uint64_t now_us)
                 break;
 
                 case DONGLE_LINK_UP:
+                DONGLE_LOGF("[DGP] Link UP (associated), applying static IP\n");
                 _gp.wlan_connphase = DONGLE_GAMEPAD_CONNPHASE_CONNECTED;
                 break;
             }
@@ -277,6 +287,7 @@ static void _gamepad_poll(uint64_t now_us)
             if(now_us >= _gp.wlan_connection_deadline_us)
             {
                 // Connection failed: reset and mark for retry
+                DONGLE_LOGF("[DGP] Association timed out, resetting\n");
                 _gamepad_reset(now_us);
                 return;
             }
@@ -285,11 +296,13 @@ static void _gamepad_poll(uint64_t now_us)
             case DONGLE_GAMEPAD_CONNPHASE_CONNECTED:
             if(dongle_api_gamepad_hook_apply_static_ip(_dongle_gamepad_address, _dongle_host_mask, _dongle_host_address))
             {
+                DONGLE_LOGF("[DGP] Static IP applied, link ready (waiting for dongle)\n");
                 _gp.wlan_connphase = DONGLE_GAMEPAD_CONNPHASE_UP;
             }
             else
             {
                 // Failed to apply IP: reset state and retry
+                DONGLE_LOGF("[DGP] Static IP apply failed, resetting\n");
                 _gamepad_reset(now_us);
                 return;
             }
@@ -302,17 +315,24 @@ static void _gamepad_poll(uint64_t now_us)
 
 static void _gamepad_apply_status(const dongle_status_s *status)
 {
-    if(_gp.status.transport_status != status->transport_status)
+    /* Each event is dispatched only if the app subscribed to it in cfg->evt.
+     * Unsubscribed events are still tracked (via _gp.status below) so change
+     * detection stays correct if the app later re-subscribes, but their hooks
+     * are never invoked. */
+    if(_gp.evt.transport_status && _gp.status.transport_status != status->transport_status)
     {
+        DONGLE_LOGF("[DGP] Console transport %s\n",
+                    (status->transport_status == DONGLE_TRANSPORT_CONNECTED) ? "CONNECTED" : "IDLE");
         dongle_api_gamepad_hook_set_transport(status->transport_status == DONGLE_TRANSPORT_CONNECTED);
     }
 
-    if(_gp.status.player_number != status->player_number)
+    if(_gp.evt.player_number && _gp.status.player_number != status->player_number)
     {
+        DONGLE_LOGF("[DGP] Player number %u\n", status->player_number);
         dongle_api_gamepad_hook_set_player(status->player_number);
     }
 
-    if(_gp.status.rumble_value != status->rumble_value)
+    if(_gp.evt.rumble && _gp.status.rumble_value != status->rumble_value)
     {
         dongle_api_gamepad_hook_set_rumble(
             status->rumble.left, status->rumble.right, 
@@ -433,6 +453,7 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
             if (_gp.have_reliable_ack && rx->ack == _gp.last_reliable_ack)
             {
                 /* Duplicate resend; silently re-ack below without re-tunneling. */
+                DONGLE_LOGF("[DGP] Duplicate reliable OUT (ack 0x%04X), re-acking\n", rx->ack);
             }
             else
             {
@@ -448,6 +469,7 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
     case DONGLE_PID_CONFIG_RELIABLE:
     default:
         /* Dongle sent something we do not answer. Stay silent (no proactive TX). */
+        DONGLE_LOGF("[DGP] Ignoring packet id %u (len %u)\n", (unsigned)rx->id, rx->len);
         send_reply = false;
         break;
     }
@@ -503,10 +525,17 @@ void dongle_api_gamepad_wlan_init(const dongle_cfg_gamepad_s *cfg)
         _gp.mode = cfg->mode;
         _gp.vid = cfg->vid;
         _gp.pid = cfg->pid;
+        _gp.evt = cfg->evt;
     }
 
     _gp.wlan_link = DONGLE_LINK_UNDEFINED;
     _gp.wlan_connphase = DONGLE_GAMEPAD_CONNPHASE_DOWN;
+
+    DONGLE_LOGF("[DGP] Init (mode %u, vid 0x%04X, pid 0x%04X)\n",
+                (unsigned)_gp.mode, _gp.vid, _gp.pid);
+    DONGLE_LOGF("[DGP] Event subscriptions: rumble %u, player %u, transport %u\n",
+                (unsigned)_gp.evt.rumble, (unsigned)_gp.evt.player_number,
+                (unsigned)_gp.evt.transport_status);
 
     /* Pick the first session id before any traffic flows. */
     _gamepad_refresh_wake();
