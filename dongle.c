@@ -22,3 +22,14 @@ __attribute__((weak)) uint16_t dongle_api_hook_get_rand_u16(void)
 {
     return 0;
 }
+
+uint16_t dongle_api_generate_ack(void)
+{
+    static uint16_t last_ack = 0;
+    uint16_t ack = dongle_api_hook_get_rand_u16() & 0xFFFu;
+    if((ack==0) || (ack==last_ack))
+    {
+        ack+=1;
+    }
+    return ack;
+}

@@ -186,6 +186,8 @@ uint64_t dongle_api_hook_get_time_us_u64(void);
 
 uint16_t dongle_api_hook_get_rand_u16(void);
 
+uint16_t dongle_api_generate_ack(void);
+
 #ifdef __cplusplus
 }
 #endif

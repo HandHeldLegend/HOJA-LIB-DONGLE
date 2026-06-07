@@ -12,16 +12,16 @@ extern "C" {
 /*                                                                            */
 /* Platform-agnostic implementation of the HOJA dongle gamepad protocol (the  */
 /* "respond-only" Switch/SInput/etc. transport described in                   */
-/* docs/GAMEPAD_IMPLEMENTATION.md).                                            */
+/* docs/GAMEPAD_IMPLEMENTATION.md).                                           */
 /*                                                                            */
 /* This library owns the protocol state machine ONLY. All networking          */
-/* (Wi-Fi association, UDP send/recv, static IP) and input/output report       */
+/* (Wi-Fi association, UDP send/recv, static IP) and input/output report      */
 /* generation are delegated to the platform through the                       */
-/* dongle_api_gamepad_hook_* callbacks below.                                  */
+/* dongle_api_gamepad_hook_* callbacks below.                                 */
 /*                                                                            */
 /* THE GOLDEN RULE: the gamepad never transmits proactively. Every TX is one  */
-/* reply to one RX. The library enforces this; the platform must only call     */
-/* dongle_api_gamepad_udp_rx() when a datagram actually arrives.               */
+/* reply to one RX. The library enforces this; the platform must only call    */
+/* dongle_api_gamepad_udp_rx() when a datagram actually arrives.              */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -61,8 +61,8 @@ void dongle_api_gamepad_wlan_task(void);
 /* -------------------------------------------------------------------------- */
 /* GAMEPAD HOOKS (platform implements the strong versions)                    */
 /*                                                                            */
-/* Each hook ships a weak default so the library links even before a platform  */
-/* provides an implementation. Provide a strong definition for every hook you  */
+/* Each hook ships a weak default so the library links even before a platform */
+/* provides an implementation. Provide a strong definition for every hook you */
 /* need in your platform adapter.                                             */
 /* -------------------------------------------------------------------------- */
 
