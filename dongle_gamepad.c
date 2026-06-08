@@ -529,6 +529,7 @@ void dongle_api_gamepad_wlan_init(const dongle_cfg_gamepad_s *cfg)
         _gp.vid = cfg->vid;
         _gp.pid = cfg->pid;
         _gp.evt = cfg->evt;
+        memcpy(_gp.name, cfg->name, sizeof(_gp.name));
     }
 
     _gp.wlan_link = DONGLE_LINK_UNDEFINED;
