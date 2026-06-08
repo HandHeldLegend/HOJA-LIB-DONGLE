@@ -56,6 +56,7 @@ typedef struct
     dongle_mode_t mode;
     uint16_t pid;
     uint16_t vid;
+    uint8_t  name[32];
 
     /* Which STATUS-derived callback events the app wants delivered. Events with
      * their flag cleared are parsed but never dispatched to the hooks. */
@@ -176,6 +177,8 @@ static void _gamepad_refresh_wake(void)
     _gp.wake.session = dongle_session_pack(&_gp.session);
     _gp.wake.vid = _gp.vid;
     _gp.wake.pid = _gp.pid;
+    
+    memcpy(_gp.wake.name, _gp.name, sizeof(_gp.wake.name));
 
     DONGLE_LOGF("[DGP] New session id 0x%03X (mode %u, vid 0x%04X, pid 0x%04X)\n",
                 _gp.session.id, (unsigned)_gp.session.mode, _gp.vid, _gp.pid);

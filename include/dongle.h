@@ -103,6 +103,7 @@ typedef struct
     uint16_t session; // dongle_session_s
     uint16_t vid;     /* USB vendor id for enumeration */
     uint16_t pid;     /* USB product id for enumeration */
+    uint8_t  name[32]; /* USB product device name */
 } dongle_wake_s;
 #pragma pack(pop)
 
@@ -176,6 +177,7 @@ typedef struct
     dongle_status_evt_subscription_s evt;
     uint16_t vid;
     uint16_t pid;
+    uint8_t  name[32];
 } dongle_cfg_gamepad_s;
 
 /* -------------------------------------------------------------------------- */
