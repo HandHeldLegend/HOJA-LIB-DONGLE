@@ -9,6 +9,7 @@
  * silently drops every datagram we send.
  */
 _Static_assert(sizeof(dongle_pkt_s) == 71, "dongle_pkt_s must be packed to 71 bytes");
+_Static_assert(sizeof(dongle_wake_s) == DONGLE_WAKE_S_LEN, "dongle_wake_s must fill the 64-byte data field");
 
 static uint8_t _dongle_gamepad_address[4] = {DONGLE_GAMEPAD_IP0, DONGLE_GAMEPAD_IP1, DONGLE_GAMEPAD_IP2, DONGLE_GAMEPAD_IP3};
 static uint8_t _dongle_host_address[4] = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONGLE_HOST_IP2, DONGLE_HOST_IP3};
@@ -56,7 +57,8 @@ typedef struct
     dongle_mode_t mode;
     uint16_t pid;
     uint16_t vid;
-    uint8_t  name[32];
+    uint8_t  name[DONGLE_WAKE_NAME_LEN];
+    uint8_t  manufacturer[DONGLE_WAKE_MANUFACTURER_LEN];
 
     /* Which STATUS-derived callback events the app wants delivered. Events with
      * their flag cleared are parsed but never dispatched to the hooks. */
@@ -177,11 +179,12 @@ static void _gamepad_refresh_wake(void)
     _gp.wake.session = dongle_session_pack(&_gp.session);
     _gp.wake.vid = _gp.vid;
     _gp.wake.pid = _gp.pid;
-    
     memcpy(_gp.wake.name, _gp.name, sizeof(_gp.wake.name));
+    memcpy(_gp.wake.manufacturer, _gp.manufacturer, sizeof(_gp.wake.manufacturer));
 
-    DONGLE_LOGF("[DGP] New session id 0x%03X (mode %u, vid 0x%04X, pid 0x%04X)\n",
-                _gp.session.id, (unsigned)_gp.session.mode, _gp.vid, _gp.pid);
+    DONGLE_LOGF("[DGP] New session id 0x%03X (mode %u, vid 0x%04X, pid 0x%04X, name \"%s\", mfg \"%s\")\n",
+                _gp.session.id, (unsigned)_gp.session.mode, _gp.vid, _gp.pid,
+                (const char *)_gp.wake.name, (const char *)_gp.wake.manufacturer);
 }
 
 static void _gamepad_reset(uint64_t now_us)
@@ -530,6 +533,12 @@ void dongle_api_gamepad_wlan_init(const dongle_cfg_gamepad_s *cfg)
         _gp.pid = cfg->pid;
         _gp.evt = cfg->evt;
         memcpy(_gp.name, cfg->name, sizeof(_gp.name));
+        memcpy(_gp.manufacturer, cfg->manufacturer, sizeof(_gp.manufacturer));
+    }
+    else
+    {
+        dongle_wake_strcopy(_gp.name, DONGLE_WAKE_NAME_LEN, NULL);
+        dongle_wake_strcopy(_gp.manufacturer, DONGLE_WAKE_MANUFACTURER_LEN, NULL);
     }
 
     _gp.wlan_link = DONGLE_LINK_UNDEFINED;

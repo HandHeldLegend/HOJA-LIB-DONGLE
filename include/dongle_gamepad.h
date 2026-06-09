@@ -27,12 +27,13 @@ extern "C" {
 /**
  * @brief Initialize the gamepad protocol state machine.
  *
- * Stores the USB identity / personality from @p cfg (mode, vid, pid) and picks
- * a fresh random session id so the dongle re-enumerates the console core.
+ * Stores the USB identity / personality from @p cfg (mode, vid, pid, name,
+ * manufacturer) and picks a fresh random session id so the dongle
+ * re-enumerates the console core.
  * The platform is responsible for radio bring-up and UDP bind BEFORE driving
  * the task loop (this library does not touch the radio directly).
  *
- * @param cfg Gamepad configuration (mode/vid/pid are used; pin/evt reserved).
+ * @param cfg Gamepad configuration (mode/vid/pid/name/manufacturer used; pin reserved).
  */
 void dongle_api_gamepad_wlan_init(const dongle_cfg_gamepad_s *cfg);
 

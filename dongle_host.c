@@ -9,6 +9,7 @@
  * peer's length filter silently drops every datagram.
  */
 _Static_assert(sizeof(dongle_pkt_s) == 71, "dongle_pkt_s must be packed to 71 bytes");
+_Static_assert(sizeof(dongle_wake_s) == DONGLE_WAKE_S_LEN, "dongle_wake_s must fill the 64-byte data field");
 
 #define DONGLE_HOST_TIMEOUT_MS 5000
 #define DONGLE_HOST_PUMP_MAX_WAIT_MS 1000
@@ -313,8 +314,9 @@ static void _host_transport_process_wake(const dongle_pkt_s *pkt)
 
     if(wake.session != current)
     {
-        DONGLE_LOGF("[DHOST] New session 0x%04X (was 0x%04X), bringing up transport\n",
-                    wake.session, current);
+        DONGLE_LOGF("[DHOST] New session 0x%04X (was 0x%04X), bringing up transport (name \"%s\", mfg \"%s\")\n",
+                    wake.session, current,
+                    (const char *)wake.name, (const char *)wake.manufacturer);
 
         /* Platform owns the (re)enumeration; it may teardown internally first. */
         dongle_api_host_transport_hook_transport_bringup(&wake);

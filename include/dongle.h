@@ -97,15 +97,39 @@ static inline void dongle_session_unpack(uint16_t packed, dongle_session_s *s)
     memcpy(s, &packed, sizeof(uint16_t));
 }
 
+#define DONGLE_WAKE_NAME_LEN         32u
+#define DONGLE_WAKE_MANUFACTURER_LEN 26u
+#define DONGLE_WAKE_S_LEN            64u
+
 #pragma pack(push, 1)
 typedef struct
 {
-    uint16_t session; // dongle_session_s
+    uint16_t session; /* dongle_session_s (packed) */
     uint16_t vid;     /* USB vendor id for enumeration */
     uint16_t pid;     /* USB product id for enumeration */
-    uint8_t  name[32]; /* USB product device name */
+    uint8_t  name[DONGLE_WAKE_NAME_LEN];         /* USB product string (NUL-terminated) */
+    uint8_t  manufacturer[DONGLE_WAKE_MANUFACTURER_LEN]; /* USB manufacturer string (NUL-terminated) */
 } dongle_wake_s;
 #pragma pack(pop)
+
+/** Copy a null-terminated C string into a fixed wake field (always NUL-terminated). */
+static inline void dongle_wake_strcopy(uint8_t *dst, size_t dst_len, const char *src)
+{
+    if (dst == NULL || dst_len == 0)
+    {
+        return;
+    }
+
+    if (src == NULL)
+    {
+        memset(dst, 0, dst_len);
+        return;
+    }
+
+    size_t n = dst_len - 1u;
+    strncpy((char *)dst, src, n);
+    dst[n] = '\0';
+}
 
 /* Fixed WLAN endpoints — gamepad firmware uses the same values. */
 #define DONGLE_WLAN_PORT    4444u
@@ -177,7 +201,8 @@ typedef struct
     dongle_status_evt_subscription_s evt;
     uint16_t vid;
     uint16_t pid;
-    uint8_t  name[32];
+    uint8_t  name[DONGLE_WAKE_NAME_LEN];
+    uint8_t  manufacturer[DONGLE_WAKE_MANUFACTURER_LEN];
 } dongle_cfg_gamepad_s;
 
 /* -------------------------------------------------------------------------- */
