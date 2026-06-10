@@ -33,7 +33,7 @@ extern "C" {
  * The platform is responsible for radio bring-up and UDP bind BEFORE driving
  * the task loop (this library does not touch the radio directly).
  *
- * @param cfg Gamepad configuration (mode/vid/pid/name/manufacturer used; pin reserved).
+ * @param cfg Gamepad configuration (mode/vid/pid/name/manufacturer/pin used).
  */
 void dongle_api_gamepad_wlan_init(const dongle_cfg_gamepad_s *cfg);
 

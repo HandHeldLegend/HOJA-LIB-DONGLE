@@ -64,6 +64,8 @@ typedef struct
      * their flag cleared are parsed but never dispatched to the hooks. */
     dongle_status_evt_subscription_s evt;
 
+    uint8_t pin[4];
+
     bool rx_got;
 
     dongle_gamepad_logging_sm logging;
@@ -229,9 +231,14 @@ static bool _gamepad_connect_attempt(uint64_t now_us)
         }
     }
 
-    // Start async connection
-    DONGLE_LOGF("[DGP] Association attempt (ssid \"%s\")\n", DONGLE_DEFAULT_WLAN_SSID);
-    dongle_api_gamepad_hook_connect_async(DONGLE_DEFAULT_WLAN_SSID, DONGLE_DEFAULT_WLAN_PASSWORD);
+    static char ssid[32];
+    static char password[16];
+
+    dongle_wlan_format_ssid(_gp.pin, ssid, sizeof(ssid));
+    dongle_wlan_format_password(_gp.pin, password, sizeof(password));
+
+    DONGLE_LOGF("[DGP] Association attempt (ssid \"%s\")\n", ssid);
+    dongle_api_gamepad_hook_connect_async(ssid, password);
 
     _gp.wlan_connection_deadline_us = now_us + (DONGLE_GAMEPAD_CONNECTION_FAIL_TIMEOUT_MS*1000);
 
@@ -534,6 +541,7 @@ void dongle_api_gamepad_wlan_init(const dongle_cfg_gamepad_s *cfg)
         _gp.evt = cfg->evt;
         memcpy(_gp.name, cfg->name, sizeof(_gp.name));
         memcpy(_gp.manufacturer, cfg->manufacturer, sizeof(_gp.manufacturer));
+        memcpy(_gp.pin, cfg->pin, sizeof(_gp.pin));
     }
     else
     {

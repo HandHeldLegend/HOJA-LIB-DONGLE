@@ -1,6 +1,7 @@
 #ifndef HOJA_LIB_DONGLE_H
 #define HOJA_LIB_DONGLE_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
@@ -191,12 +192,12 @@ typedef struct
 
 typedef struct
 {
-    uint8_t pin[4]; // 4 digit pin, each number 0-9 used to generate the SSID+Password (HOJA_DONGLE_XXXX)
+    uint8_t pin[4]; /* 4-digit WLAN pin (0000-9999) -> HOJA_WLAN_XXXX / HOJA_XXXX */
 } dongle_cfg_host_s;
 
 typedef struct
 {
-    uint8_t pin[4]; // 4 digit pin, each number 0-9, used to determine the SSID+Password (HOJA_DONGLE_XXXX)
+    uint8_t pin[4]; /* 4-digit WLAN pin (0000-9999) -> HOJA_WLAN_XXXX / HOJA_XXXX */
     dongle_mode_t mode;
     dongle_status_evt_subscription_s evt;
     uint16_t vid;
@@ -214,6 +215,38 @@ uint64_t dongle_api_hook_get_time_us_u64(void);
 uint16_t dongle_api_hook_get_rand_u16(void);
 
 uint16_t dongle_api_generate_ack(void);
+
+/** Expand a stored key (0-9999) into four decimal digits. */
+static inline void dongle_wlan_pin_from_u16(uint16_t key, uint8_t pin[4])
+{
+    key = (uint16_t)(key % 10000u);
+
+    if (pin == NULL)
+    {
+        return;
+    }
+
+    pin[0] = (uint8_t)(key / 1000u);
+    pin[1] = (uint8_t)((key / 100u) % 10u);
+    pin[2] = (uint8_t)((key / 10u) % 10u);
+    pin[3] = (uint8_t)(key % 10u);
+}
+
+/** Pack four decimal digits into a 0-9999 key. */
+static inline uint16_t dongle_wlan_pin_to_u16(const uint8_t pin[4])
+{
+    if (pin == NULL)
+    {
+        return 0;
+    }
+
+    return (uint16_t)(((pin[0] % 10u) * 1000u) + ((pin[1] % 10u) * 100u) +
+                      ((pin[2] % 10u) * 10u) + (pin[3] % 10u));
+}
+
+void dongle_wlan_format_ssid(const uint8_t pin[4], char *dst, size_t dst_len);
+
+void dongle_wlan_format_password(const uint8_t pin[4], char *dst, size_t dst_len);
 
 #ifdef __cplusplus
 }
