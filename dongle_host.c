@@ -1,3 +1,5 @@
+#include <string.h>
+
 #include <dongle.h>
 #include <dongle_host.h>
 #include <dongle_log.h>
@@ -332,16 +334,28 @@ static void _host_transport_process_wake(const dongle_pkt_s *pkt)
 
 void dongle_api_host_wlan_init(const dongle_cfg_host_s *cfg)
 {
-    (void)cfg; /* pin-derived SSID reserved; the gamepad pairs on the default. */
-
     _host_wlan_reset();
 
-    /* Bring the access point up. The gamepad firmware associates with the same
-     * fixed SSID/password, so the host advertises those exact values. */
     uint8_t ip[4]   = {_host_address[0], _host_address[1], _host_address[2], _host_address[3]};
     uint8_t mask[4] = {_host_mask[0], _host_mask[1], _host_mask[2], _host_mask[3]};
 
-    if(!dongle_api_host_wlan_hook_ap_bringup(DONGLE_DEFAULT_WLAN_SSID, DONGLE_DEFAULT_WLAN_PASSWORD, ip, mask))
+    char ssid[32];
+    char password[16];
+
+    if (cfg != NULL)
+    {
+        dongle_wlan_format_ssid(cfg->pin, ssid, sizeof(ssid));
+        dongle_wlan_format_password(cfg->pin, password, sizeof(password));
+    }
+    else
+    {
+        strncpy(ssid, DONGLE_DEFAULT_WLAN_SSID, sizeof(ssid));
+        ssid[sizeof(ssid) - 1u] = '\0';
+        strncpy(password, DONGLE_DEFAULT_WLAN_PASSWORD, sizeof(password));
+        password[sizeof(password) - 1u] = '\0';
+    }
+
+    if(!dongle_api_host_wlan_hook_ap_bringup(ssid, password, ip, mask))
     {
         DONGLE_LOGF("[DHOST] AP bring-up reported failure\n");
     }
