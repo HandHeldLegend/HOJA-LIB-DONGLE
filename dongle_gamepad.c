@@ -17,9 +17,9 @@ static uint8_t _dongle_host_address[4] = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONG
 #define DONGLE_GAMEPAD_LINK_STATUS_INTERVAL_MS 100
 // Joining a dongle and getting an address
 #define DONGLE_GAMEPAD_CONNECTION_FAIL_TIMEOUT_MS 5000
-// A free dongle beacons every second at most, and answers our reply right away. Silence means it
-// is busy with another gamepad (or not one of ours).
-#define DONGLE_GAMEPAD_DONGLE_WAIT_MS 1500
+// A free dongle beacons at least once a second, and sends STATUS soon after adopting us. Silence
+// that long means it is busy with another gamepad (or not one of ours).
+#define DONGLE_GAMEPAD_DONGLE_WAIT_MS 2500
 // Nothing to join: look again after this long
 #define DONGLE_GAMEPAD_RESCAN_MS 1000
 
@@ -591,6 +591,8 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
         {
             _gamepad_build_wake_reply(&tx);
             _gp.wake_replied = true;
+            // Give the dongle time to adopt us from here
+            _gp.wlan_deadline_us = dongle_api_hook_get_time_us_u64() + (DONGLE_GAMEPAD_DONGLE_WAIT_MS * 1000);
         }
         else
         {
