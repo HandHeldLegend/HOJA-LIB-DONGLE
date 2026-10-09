@@ -66,6 +66,15 @@ void dongle_api_gamepad_wlan_task(void);
  */
 void dongle_api_gamepad_scan_result(const char *ssid, uint8_t ssid_len, int16_t rssi);
 
+/**
+ * @brief Change the identity sent in WAKE replies, after hook_mode_request() said yes.
+ *
+ * Starts a new session so the dongle re-enumerates as the new mode.
+ */
+void dongle_api_gamepad_set_identity(dongle_mode_t mode, uint16_t vid, uint16_t pid,
+                                     const uint8_t name[DONGLE_WAKE_NAME_LEN],
+                                     const uint8_t manufacturer[DONGLE_WAKE_MANUFACTURER_LEN]);
+
 /** True while a dongle has adopted us (it sends us STATUS). */
 bool dongle_api_gamepad_adopted(void);
 
@@ -100,6 +109,10 @@ void dongle_api_gamepad_hook_disconnect(void);
 
 /** Pairing found a dongle and it adopted us: save @p pin as the paired one. */
 void dongle_api_gamepad_hook_paired(const uint8_t pin[4]);
+
+/** The dongle's host wants @p mode and ours was not forced: return true to switch to it, then
+ *  call dongle_api_gamepad_set_identity(). Return false to keep the current mode. */
+bool dongle_api_gamepad_hook_mode_request(dongle_mode_t mode);
 
 /** Transmit exactly one datagram to @p ip:@p port. The only TX path. */
 void dongle_api_gamepad_hook_udp_tx(const dongle_pkt_s *pkt, uint8_t ip[4], uint16_t port);

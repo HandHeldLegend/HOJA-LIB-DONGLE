@@ -52,8 +52,8 @@ void dongle_api_host_transport_mark_sent(void);
 /**
  * @brief Publish what the dongle is plugged into, for the beacon.
  *
- * Gamepads that follow the dongle switch to @p host_mode. Until this is called the beacon reports
- * DONGLE_HOST_UNKNOWN and gamepads keep their own mode.
+ * Gamepads that follow the dongle switch to @p host_mode. No beacon goes out until this is
+ * called; pass DONGLE_HOST_UNKNOWN when nothing was found and gamepads keep their own mode.
  */
 void dongle_api_host_transport_set_detected(dongle_host_kind_t host_kind, dongle_mode_t host_mode);
 

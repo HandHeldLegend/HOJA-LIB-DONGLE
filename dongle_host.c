@@ -67,6 +67,7 @@ typedef struct
 {
     uint8_t host_kind; /* dongle_host_kind_t, DONGLE_HOST_UNKNOWN until detected */
     uint8_t host_mode; /* dongle_mode_t */
+    uint8_t done;      /* detection finished: beacons start */
 } dongle_host_detect_s;
 
 DONGLE_CROSSCORE_SNAPSHOT_TYPE(detect, dongle_host_detect_s);
@@ -271,6 +272,12 @@ static void _host_wlan_send_wake(void)
 {
     dongle_host_detect_s detect;
     dongle_snapshot_detect_read(&_detect_host_ss, &detect);
+
+    /* Gamepads that follow us must hear what we are plugged into, so wait until we know */
+    if (!detect.done)
+    {
+        return;
+    }
 
     dongle_beacon_s beacon = {
         .protocol   = DONGLE_PROTOCOL_VERSION,
@@ -616,6 +623,7 @@ void dongle_api_host_transport_set_detected(dongle_host_kind_t host_kind, dongle
     dongle_host_detect_s detect = {
         .host_kind = (uint8_t)host_kind,
         .host_mode = (uint8_t)host_mode,
+        .done = 1,
     };
     dongle_snapshot_detect_write(&_detect_host_ss, &detect);
 }

@@ -84,6 +84,7 @@ typedef struct
     uint8_t  name[DONGLE_WAKE_NAME_LEN];
     uint8_t  manufacturer[DONGLE_WAKE_MANUFACTURER_LEN];
     bool     mode_forced;
+    bool     mode_pending; /* Asked the platform to change to the dongle's mode */
     uint32_t fw_version;
 
     /* Which STATUS-derived callback events the app wants delivered. Events with
@@ -138,6 +139,13 @@ __attribute__((weak)) void dongle_api_gamepad_hook_disconnect(void)
 __attribute__((weak)) void dongle_api_gamepad_hook_paired(const uint8_t pin[4])
 {
     (void)pin;
+}
+
+// Implement switching to the dongle's mode (true if it will, then call set_identity)
+__attribute__((weak)) bool dongle_api_gamepad_hook_mode_request(dongle_mode_t mode)
+{
+    (void)mode;
+    return false;
 }
 
 // Implement UDP transmission
@@ -245,6 +253,7 @@ static void _gamepad_clear_session(void)
 
     _gp.dongle_seen = false;
     _gp.dongle_mismatch = false;
+    _gp.mode_pending = false;
 
     _gp.rx_got = false;
 
@@ -561,6 +570,23 @@ static bool _gamepad_process_beacon(const dongle_pkt_s *rx)
         return false;
     }
 
+    // Unless a mode was chosen on the gamepad, take the dongle's. The platform changes mode and
+    // gives us the new identity; a beacon after that gets our reply.
+    if (_gp.mode_pending)
+    {
+        return false;
+    }
+
+    const dongle_mode_t host_mode = (dongle_mode_t)_gp.dongle.host_mode;
+    if (!_gp.mode_forced && _gp.dongle.host_kind != DONGLE_HOST_UNKNOWN && host_mode != DONGLE_MODE_UNKNOWN &&
+        host_mode != _gp.mode && dongle_api_gamepad_hook_mode_request(host_mode))
+    {
+        DONGLE_LOGF("[DGP] Dongle wants mode %u, switching from %u\n", (unsigned)host_mode, (unsigned)_gp.mode);
+        _gp.mode_pending = true;
+        _gp.wlan_deadline_us = dongle_api_hook_get_time_us_u64() + (DONGLE_GAMEPAD_DONGLE_WAIT_MS * 1000);
+        return false;
+    }
+
     return true;
 }
 
@@ -761,6 +787,27 @@ void dongle_api_gamepad_scan_result(const char *ssid, uint8_t ssid_len, int16_t 
     {
         _gp.candidates[_gp.candidate_count++] = (dongle_gamepad_candidate_s){.key = key, .rssi = rssi};
     }
+}
+
+void dongle_api_gamepad_set_identity(dongle_mode_t mode, uint16_t vid, uint16_t pid,
+                                     const uint8_t name[DONGLE_WAKE_NAME_LEN],
+                                     const uint8_t manufacturer[DONGLE_WAKE_MANUFACTURER_LEN])
+{
+    _gp.mode = mode;
+    _gp.vid = vid;
+    _gp.pid = pid;
+    if (name)
+    {
+        memcpy(_gp.name, name, sizeof(_gp.name));
+    }
+    if (manufacturer)
+    {
+        memcpy(_gp.manufacturer, manufacturer, sizeof(_gp.manufacturer));
+    }
+    _gp.mode_pending = false;
+
+    /* A new session makes the dongle bring its console up as us */
+    _gamepad_refresh_wake();
 }
 
 bool dongle_api_gamepad_adopted(void)
