@@ -175,10 +175,16 @@ static inline void dongle_wake_strcopy(uint8_t *dst, size_t dst_len, const char 
     dst[n] = '\0';
 }
 
-/* WLAN endpoints. Each gamepad uses its own address on the dongle's network, so several can join
- * one network without clashing; the dongle answers whichever one it adopted. */
+/* WLAN endpoints. Gamepads take an address from the dongle's DHCP server, so several can join
+ * one dongle's network without clashing; the dongle answers whichever one it adopted. */
 #define DONGLE_WLAN_PORT    4444u
 #define DONGLE_GAMEPAD_PORT DONGLE_WLAN_PORT
+
+/* Beacons go to every gamepad on the network until one is adopted */
+#define DONGLE_BROADCAST_IP0 192u
+#define DONGLE_BROADCAST_IP1 168u
+#define DONGLE_BROADCAST_IP2 4u
+#define DONGLE_BROADCAST_IP3 255u
 
 /* The dongle (AP) lives at 192.168.4.1 and listens on DONGLE_WLAN_PORT. */
 #define DONGLE_HOST_IP0      192u
@@ -194,7 +200,7 @@ static inline void dongle_wake_strcopy(uint8_t *dst, size_t dst_len, const char 
 
 typedef enum 
 {
-    DONGLE_PID_WAKE = 0, // Empty from a gamepad: hello. Beacon from a free dongle in reply. dongle_wake_s from the gamepad to be adopted
+    DONGLE_PID_WAKE = 0, // Wake packet, this is sent when the dongle is awaiting traffic from the gamepad
     DONGLE_PID_CORE_RELIABLE, // Reliable USB tunnel data (command replies, etc.)
     DONGLE_PID_CORE_UNRELIABLE, // High-rate input reports
     DONGLE_PID_STATUS, // Packet containing dongle_status_u data

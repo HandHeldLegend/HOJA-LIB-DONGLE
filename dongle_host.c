@@ -22,6 +22,7 @@ _Static_assert(sizeof(dongle_wake_s) == DONGLE_WAKE_S_LEN, "dongle_wake_s must f
 
 #define DONGLE_HOST_MAILBOX_LEN 64
 
+static uint8_t _broadcast_address[4] = {DONGLE_BROADCAST_IP0, DONGLE_BROADCAST_IP1, DONGLE_BROADCAST_IP2, DONGLE_BROADCAST_IP3};
 static uint8_t _host_address[4]    = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONGLE_HOST_IP2, DONGLE_HOST_IP3};
 
 /* Who we are, sent in every beacon (set once at init, read by the wlan task) */
@@ -264,11 +265,9 @@ static void _host_wlan_send_status(void)
     _host_wlan_send_to_gamepad(&pkt);
 }
 
-/* The beacon answers a gamepad's hello: this dongle is free, which protocol it speaks and what it
- * is plugged into. Only a free dongle answers, so a gamepad that hears nothing moves on. It is
- * sent to that gamepad only: a gamepad that just joined can't read broadcasts until the network's
- * group key reaches it, which takes about 6 s. */
-static void _host_wlan_send_beacon(const uint8_t ip[4])
+/* The beacon tells every gamepad in range that this dongle is free, which protocol it speaks and
+ * what it is plugged into. Only a free dongle beacons, so a gamepad that hears none moves on. */
+static void _host_wlan_send_wake(void)
 {
     dongle_host_detect_s detect;
     dongle_snapshot_detect_read(&_detect_host_ss, &detect);
@@ -288,8 +287,8 @@ static void _host_wlan_send_beacon(const uint8_t ip[4])
     pkt.len = sizeof(beacon);
     memcpy(pkt.data, &beacon, sizeof(beacon));
 
-    uint8_t dst[4] = {ip[0], ip[1], ip[2], ip[3]};
-    dongle_api_host_wlan_hook_udp_tx(&pkt, dst, DONGLE_GAMEPAD_PORT);
+    uint8_t ip[4] = {_broadcast_address[0], _broadcast_address[1], _broadcast_address[2], _broadcast_address[3]};
+    dongle_api_host_wlan_hook_udp_tx(&pkt, ip, DONGLE_GAMEPAD_PORT);
 }
 
 bool _host_wlan_pump_task(uint64_t now_us)
@@ -432,13 +431,16 @@ void dongle_api_host_wlan_task(void)
 
     if(_host_wlan_pump_task(now_us))
     {
-        /* Without a gamepad there is nothing to send: beacons answer hellos */
         if(_host_wlan_is_link_up())
         {
             if(!_host_wlan_send_reliable())
             {
                 _host_wlan_send_status();
             }
+        }
+        else
+        {
+            _host_wlan_send_wake();
         }
     }
 }
@@ -450,18 +452,8 @@ void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt, const uint8_t ip[4])
         return;
     }
 
-    /* A gamepad looking for a dongle says hello; answer it while free */
-    if(pkt->id == DONGLE_PID_WAKE && pkt->len == 0)
-    {
-        if(!_hsm.gamepad_set)
-        {
-            _host_wlan_send_beacon(ip);
-        }
-        return;
-    }
-
-    /* One gamepad at a time. While one is adopted, other gamepads that joined our network get no
-     * answers, so they give up and try another dongle. */
+    /* One gamepad at a time. While one is adopted, other gamepads that joined our network hear no
+     * beacons and get no answers, so they give up and try another dongle. */
     if(_hsm.gamepad_set)
     {
         if(memcmp(ip, _hsm.gamepad_ip, 4) != 0)
@@ -471,7 +463,7 @@ void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt, const uint8_t ip[4])
     }
     else
     {
-        /* Adopt the first gamepad that answers our beacon on our protocol */
+        /* Adopt the first gamepad that answers a beacon on our protocol */
         if(pkt->id != DONGLE_PID_WAKE || pkt->len != sizeof(dongle_wake_s) ||
            pkt->data[offsetof(dongle_wake_s, protocol)] != DONGLE_PROTOCOL_VERSION)
         {

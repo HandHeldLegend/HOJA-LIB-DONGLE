@@ -17,11 +17,9 @@ static uint8_t _dongle_host_address[4] = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONG
 #define DONGLE_GAMEPAD_LINK_STATUS_INTERVAL_MS 100
 // Joining a dongle and getting an address
 #define DONGLE_GAMEPAD_CONNECTION_FAIL_TIMEOUT_MS 10000
-// A free dongle answers our hello with its beacon, and sends STATUS soon after adopting us.
-// Silence that long means it is busy with another gamepad (or not one of ours).
+// A free dongle beacons at least once a second, and sends STATUS soon after adopting us. Silence
+// that long means it is busy with another gamepad (or not one of ours).
 #define DONGLE_GAMEPAD_DONGLE_WAIT_MS 2500
-// Hello to the dongle while waiting to be adopted
-#define DONGLE_GAMEPAD_HELLO_INTERVAL_MS 500
 // Nothing to join: look again after this long
 #define DONGLE_GAMEPAD_RESCAN_MS 1000
 
@@ -63,7 +61,7 @@ typedef struct
     uint16_t last_reliable_ack;
     bool have_reliable_ack;
 
-    uint64_t last_hello_us;
+    bool wake_replied;
 
     dongle_link_status_t wlan_link;
     dongle_gamepad_connphase_t wlan_connphase;
@@ -243,7 +241,7 @@ static void _gamepad_clear_session(void)
     _gp.last_reliable_ack = 0;
     _gp.have_reliable_ack = false;
 
-    _gp.last_hello_us = 0;
+    _gp.wake_replied = false;
 
     _gp.dongle_seen = false;
     _gp.dongle_mismatch = false;
@@ -369,23 +367,6 @@ static void _gamepad_join_next(uint64_t now_us)
     _gp.wlan_deadline_us = now_us + (DONGLE_GAMEPAD_CONNECTION_FAIL_TIMEOUT_MS * 1000);
 }
 
-/* Ask the dongle we joined for its beacon. The one transmission not in reply to the dongle: it
- * hears nothing from us otherwise, and its beacon can't be broadcast (see dongle_host.c). */
-static void _gamepad_send_hello(uint64_t now_us)
-{
-    if ((now_us - _gp.last_hello_us) < (DONGLE_GAMEPAD_HELLO_INTERVAL_MS * 1000))
-    {
-        return;
-    }
-    _gp.last_hello_us = now_us;
-
-    dongle_pkt_s tx = {0};
-    tx.session = dongle_session_pack(&_gp.session);
-    tx.id = DONGLE_PID_WAKE;
-    tx.len = 0;
-    dongle_api_gamepad_hook_udp_tx(&tx, _dongle_host_address, DONGLE_HOST_PORT);
-}
-
 /* This dongle didn't work out (gone, busy or another version): leave it and try the next */
 static void _gamepad_join_failed(uint64_t now_us, const char *why)
 {
@@ -452,10 +433,6 @@ static void _gamepad_poll(uint64_t now_us)
         else if (expired)
         {
             _gamepad_join_failed(now_us, _gp.dongle_seen ? "did not adopt us" : "is busy");
-        }
-        else
-        {
-            _gamepad_send_hello(now_us);
         }
         break;
 
@@ -575,12 +552,6 @@ static bool _gamepad_process_beacon(const dongle_pkt_s *rx)
         return false;
     }
 
-    // Give the dongle time to adopt us from its first answer
-    if (!_gp.dongle_seen)
-    {
-        _gp.wlan_deadline_us = dongle_api_hook_get_time_us_u64() + (DONGLE_GAMEPAD_DONGLE_WAIT_MS * 1000);
-    }
-
     memcpy(&_gp.dongle, rx->data, sizeof(dongle_beacon_s));
     _gp.dongle_seen = true;
 
@@ -612,11 +583,16 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
     switch ((dongle_pid_t)rx->id)
     {
     case DONGLE_PID_WAKE:
-        /* A beacon answers our hello until the dongle adopts us. Each gets our WAKE reply, which
-         * carries the same session, so the dongle brings its console up once. */
-        if (_gamepad_process_beacon(rx))
+        /* Only the first beacon in a run of repeats gets a WAKE reply: the dongle floods beacons
+         * until we are acknowledged, but replying to each restarts our input/session and spams
+         * the host. Beacons are broadcast, so they also reach us while another dongle's network
+         * is being joined; those are ignored until we are on one. */
+        if (_gamepad_process_beacon(rx) && !_gp.wake_replied)
         {
             _gamepad_build_wake_reply(&tx);
+            _gp.wake_replied = true;
+            // Give the dongle time to adopt us from here
+            _gp.wlan_deadline_us = dongle_api_hook_get_time_us_u64() + (DONGLE_GAMEPAD_DONGLE_WAIT_MS * 1000);
         }
         else
         {
@@ -625,6 +601,9 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
         break;
 
     case DONGLE_PID_STATUS:
+        /* Any non-WAKE traffic means the dongle has advanced past the beacon
+         * phase, so re-arm WAKE handling for the next beacon run. */
+        _gp.wake_replied = false;
         _gamepad_adopted();
 
         /* A STATUS payload is exactly sizeof(dongle_status_s) bytes. */
@@ -636,6 +615,8 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
         break;
 
     case DONGLE_PID_CORE_RELIABLE:
+        /* Non-WAKE traffic: re-arm WAKE handling (see STATUS case above). */
+        _gp.wake_replied = false;
         _gamepad_adopted();
 
         /* Host OUT (Switch commands / rumble). Hand it to the protocol engine;

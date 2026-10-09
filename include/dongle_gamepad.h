@@ -20,9 +20,8 @@ extern "C" {
 /* dongle_api_gamepad_hook_* callbacks below.                                 */
 /*                                                                            */
 /* THE GOLDEN RULE: the gamepad never transmits proactively. Every TX is one  */
-/* reply to one RX, except the hello it sends twice a second while waiting    */
-/* for a dongle to adopt it. The library enforces this; the platform must     */
-/* only call dongle_api_gamepad_udp_rx() when a datagram actually arrives.    */
+/* reply to one RX. The library enforces this; the platform must only call    */
+/* dongle_api_gamepad_udp_rx() when a datagram actually arrives.              */
 /* -------------------------------------------------------------------------- */
 
 /**
