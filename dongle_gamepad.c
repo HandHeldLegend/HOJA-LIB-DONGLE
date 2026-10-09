@@ -16,7 +16,7 @@ static uint8_t _dongle_host_address[4] = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONG
 #define DONGLE_GAMEPAD_REPORT_LOG_INTERVAL_MS 4000
 #define DONGLE_GAMEPAD_LINK_STATUS_INTERVAL_MS 100
 // Joining a dongle and getting an address
-#define DONGLE_GAMEPAD_CONNECTION_FAIL_TIMEOUT_MS 5000
+#define DONGLE_GAMEPAD_CONNECTION_FAIL_TIMEOUT_MS 10000
 // A free dongle beacons at least once a second, and sends STATUS soon after adopting us. Silence
 // that long means it is busy with another gamepad (or not one of ours).
 #define DONGLE_GAMEPAD_DONGLE_WAIT_MS 2500
