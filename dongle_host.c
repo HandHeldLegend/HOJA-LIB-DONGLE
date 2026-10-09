@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stddef.h>
 
 #include <dongle.h>
 #include <dongle_host.h>
@@ -21,9 +22,12 @@ _Static_assert(sizeof(dongle_wake_s) == DONGLE_WAKE_S_LEN, "dongle_wake_s must f
 
 #define DONGLE_HOST_MAILBOX_LEN 64
 
-/* Fixed endpoints (the gamepad firmware filters on these exact values). */
-static uint8_t _gamepad_address[4] = {DONGLE_GAMEPAD_IP0, DONGLE_GAMEPAD_IP1, DONGLE_GAMEPAD_IP2, DONGLE_GAMEPAD_IP3};
+static uint8_t _broadcast_address[4] = {DONGLE_BROADCAST_IP0, DONGLE_BROADCAST_IP1, DONGLE_BROADCAST_IP2, DONGLE_BROADCAST_IP3};
 static uint8_t _host_address[4]    = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONGLE_HOST_IP2, DONGLE_HOST_IP3};
+
+/* Who we are, sent in every beacon (set once at init, read by the wlan task) */
+static uint8_t  _host_board = DONGLE_BOARD_UNKNOWN;
+static uint32_t _host_fw_version = 0;
 static uint8_t _host_mask[4]       = {DONGLE_NETMASK0, DONGLE_NETMASK1, DONGLE_NETMASK2, DONGLE_NETMASK3};
 
 /* ==========================================================================
@@ -41,6 +45,7 @@ static uint8_t _host_mask[4]       = {DONGLE_NETMASK0, DONGLE_NETMASK1, DONGLE_N
  *   _reliable_rx_host_ss    W         T       reliable input report queue
  *   _control_rx_host_ss     W         T       WAKE / control packets
  *   _reliable_tx_host_ss    T         W       reliable host->gamepad OUT queue
+ *   _detect_host_ss         T         W       what the dongle is plugged into
  * ========================================================================== */
 
 DONGLE_CROSSCORE_SNAPSHOT_TYPE(session, dongle_session_s);
@@ -58,6 +63,15 @@ dongle_snapshot_link_t _link_host_ss;
 DONGLE_CROSSCORE_SNAPSHOT_TYPE(packet, dongle_pkt_s);
 dongle_snapshot_packet_t _unreliable_rx_host_ss;
 
+typedef struct
+{
+    uint8_t host_kind; /* dongle_host_kind_t, DONGLE_HOST_UNKNOWN until detected */
+    uint8_t host_mode; /* dongle_mode_t */
+} dongle_host_detect_s;
+
+DONGLE_CROSSCORE_SNAPSHOT_TYPE(detect, dongle_host_detect_s);
+dongle_snapshot_detect_t _detect_host_ss;
+
 DONGLE_CROSSCORE_FIFO_TYPE(packet, dongle_pkt_s, DONGLE_HOST_MAILBOX_LEN);
 dongle_fifo_packet_t _reliable_rx_host_ss;
 dongle_fifo_packet_t _control_rx_host_ss;
@@ -71,6 +85,8 @@ typedef struct
     uint16_t inflight_ack;   /* non-zero while a reliable OUT awaits its echo */
     dongle_pkt_s inflight_pkt;
     bool     link_up;        /* cached link state for edge detection */
+    bool     gamepad_set;    /* a gamepad is adopted, everything else is ignored */
+    uint8_t  gamepad_ip[4];  /* its DHCP address */
 } dongle_host_sm;
 
 static dongle_host_sm _hsm;
@@ -135,6 +151,9 @@ static void _host_wlan_set_link(bool up)
         DONGLE_LOGF("[DHOST] Link DOWN\n");
         _host_wlan_flush_reliable_lane();
 
+        /* Free again: the next gamepad to answer a beacon is adopted */
+        _hsm.gamepad_set = false;
+
         /* Invalidate the latest unreliable input so a new session does not read
          * a report left over from the previous one (wlan owns this snapshot). */
         dongle_pkt_s empty = {0};
@@ -156,10 +175,15 @@ static void _host_wlan_reset(void)
     dongle_snapshot_link_write(&_link_host_ss, &down);
 }
 
-/* Transmit one datagram to the gamepad endpoint (the only WLAN TX path). */
+/* Transmit one datagram to the adopted gamepad (the only unicast TX path). */
 static void _host_wlan_send_to_gamepad(const dongle_pkt_s *pkt)
 {
-    uint8_t ip[4] = {_gamepad_address[0], _gamepad_address[1], _gamepad_address[2], _gamepad_address[3]};
+    if (!_hsm.gamepad_set)
+    {
+        return;
+    }
+
+    uint8_t ip[4] = {_hsm.gamepad_ip[0], _hsm.gamepad_ip[1], _hsm.gamepad_ip[2], _hsm.gamepad_ip[3]};
     dongle_api_host_wlan_hook_udp_tx(pkt, ip, DONGLE_GAMEPAD_PORT);
 }
 
@@ -241,15 +265,30 @@ static void _host_wlan_send_status(void)
     _host_wlan_send_to_gamepad(&pkt);
 }
 
+/* The beacon tells every gamepad in range that this dongle is free, which protocol it speaks and
+ * what it is plugged into. Only a free dongle beacons, so a gamepad that hears none moves on. */
 static void _host_wlan_send_wake(void)
 {
-    dongle_pkt_s pkt;
+    dongle_host_detect_s detect;
+    dongle_snapshot_detect_read(&_detect_host_ss, &detect);
+
+    dongle_beacon_s beacon = {
+        .protocol   = DONGLE_PROTOCOL_VERSION,
+        .board      = _host_board,
+        .host_kind  = detect.host_kind,
+        .host_mode  = (detect.host_kind == DONGLE_HOST_UNKNOWN) ? DONGLE_MODE_UNKNOWN : detect.host_mode,
+        .fw_version = _host_fw_version,
+    };
+
+    dongle_pkt_s pkt = {0};
     pkt.session = 0;
     pkt.ack = 0;
     pkt.id  = DONGLE_PID_WAKE;
-    pkt.len = 0;
+    pkt.len = sizeof(beacon);
+    memcpy(pkt.data, &beacon, sizeof(beacon));
 
-    _host_wlan_send_to_gamepad(&pkt);
+    uint8_t ip[4] = {_broadcast_address[0], _broadcast_address[1], _broadcast_address[2], _broadcast_address[3]};
+    dongle_api_host_wlan_hook_udp_tx(&pkt, ip, DONGLE_GAMEPAD_PORT);
 }
 
 bool _host_wlan_pump_task(uint64_t now_us)
@@ -310,6 +349,11 @@ static void _host_transport_process_wake(const dongle_pkt_s *pkt)
     dongle_wake_s wake;
     memcpy(&wake, pkt->data, sizeof(wake));
 
+    if(wake.protocol != DONGLE_PROTOCOL_VERSION)
+    {
+        return;
+    }
+
     dongle_session_s session;
     dongle_snapshot_session_read(&_session_host_ss, &session);
     uint16_t current = dongle_session_pack(&session);
@@ -344,6 +388,9 @@ void dongle_api_host_wlan_init(const dongle_cfg_host_s *cfg)
 
     if (cfg != NULL)
     {
+        _host_board = cfg->board;
+        _host_fw_version = cfg->fw_version;
+
         dongle_wlan_format_ssid(cfg->pin, ssid, sizeof(ssid));
         dongle_wlan_format_password(cfg->pin, password, sizeof(password));
     }
@@ -398,8 +445,36 @@ void dongle_api_host_wlan_task(void)
     }
 }
 
-void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt)
+void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt, const uint8_t ip[4])
 {
+    if(!pkt || !ip)
+    {
+        return;
+    }
+
+    /* One gamepad at a time. While one is adopted, other gamepads that joined our network hear no
+     * beacons and get no answers, so they give up and try another dongle. */
+    if(_hsm.gamepad_set)
+    {
+        if(memcmp(ip, _hsm.gamepad_ip, 4) != 0)
+        {
+            return;
+        }
+    }
+    else
+    {
+        /* Adopt the first gamepad that answers a beacon on our protocol */
+        if(pkt->id != DONGLE_PID_WAKE || pkt->len != sizeof(dongle_wake_s) ||
+           pkt->data[offsetof(dongle_wake_s, protocol)] != DONGLE_PROTOCOL_VERSION)
+        {
+            return;
+        }
+
+        memcpy(_hsm.gamepad_ip, ip, 4);
+        _hsm.gamepad_set = true;
+        DONGLE_LOGF("[DHOST] Adopted gamepad %u.%u.%u.%u\n", ip[0], ip[1], ip[2], ip[3]);
+    }
+
     dongle_session_s session;
     dongle_snapshot_session_read(&_session_host_ss, &session);
     uint16_t sessionu16 = dongle_session_pack(&session);
@@ -534,6 +609,15 @@ void dongle_api_host_transport_set_player(uint8_t player_number)
     dongle_snapshot_status_read(&_status_host_ss, &status);
     status.player_number = player_number;
     dongle_snapshot_status_write(&_status_host_ss, &status);
+}
+
+void dongle_api_host_transport_set_detected(dongle_host_kind_t host_kind, dongle_mode_t host_mode)
+{
+    dongle_host_detect_s detect = {
+        .host_kind = (uint8_t)host_kind,
+        .host_mode = (uint8_t)host_mode,
+    };
+    dongle_snapshot_detect_write(&_detect_host_ss, &detect);
 }
 
 void dongle_api_host_transport_get_status(dongle_status_s *out)

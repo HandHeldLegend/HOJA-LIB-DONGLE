@@ -52,12 +52,28 @@ void dongle_api_gamepad_udp_rx(const dongle_pkt_s *pkt);
 /**
  * @brief Periodic task: drives connection phase, retries, and optional stats.
  *
- * Call this regularly from the platform main loop. It polls the link state via
- * dongle_api_gamepad_hook_link_up(), drives (re)connection through
- * dongle_api_gamepad_hook_connect_async() / _apply_static_ip(), and (when
+ * Call this regularly from the platform main loop. It scans for dongles, joins
+ * them in turn (the paired one first unless pairing, then the strongest) and
+ * moves on from any that is gone or busy, and (when
  * DONGLE_LIB_DEBUG_GAMEPADSTATS is enabled) prints a periodic throughput line.
  */
 void dongle_api_gamepad_wlan_task(void);
+
+/**
+ * @brief Report one network seen by the scan started with hook_scan_start().
+ *
+ * Call it for every result, duplicates included; only HOJA_WLAN_ networks count.
+ */
+void dongle_api_gamepad_scan_result(const char *ssid, uint8_t ssid_len, int16_t rssi);
+
+/** True while a dongle has adopted us (it sends us STATUS). */
+bool dongle_api_gamepad_adopted(void);
+
+/**
+ * @brief The latest beacon of the dongle being joined or connected.
+ * @return false until one has been heard.
+ */
+bool dongle_api_gamepad_get_dongle(dongle_beacon_s *out);
 
 /* -------------------------------------------------------------------------- */
 /* GAMEPAD HOOKS (platform implements the strong versions)                    */
@@ -67,15 +83,23 @@ void dongle_api_gamepad_wlan_task(void);
 /* need in your platform adapter.                                             */
 /* -------------------------------------------------------------------------- */
 
-/** Return the current wireless link status (associated or not). */
+/** Return DONGLE_LINK_UP once associated with the dongle and given an address by its DHCP. */
 dongle_link_status_t dongle_api_gamepad_hook_link_up(void);
 
-/** Pin the station to the gamepad address the dongle filters on.
- *  @return true once the interface holds @p addr; false to force a retry. */
-bool dongle_api_gamepad_hook_apply_static_ip(uint8_t addr[4], uint8_t mask[4], uint8_t gateway[4]);
+/** Start a non-blocking scan; feed each result to dongle_api_gamepad_scan_result(). */
+bool dongle_api_gamepad_hook_scan_start(void);
+
+/** True while the scan is running. */
+bool dongle_api_gamepad_hook_scan_active(void);
 
 /** Begin a non-blocking association with the dongle AP. */
 void dongle_api_gamepad_hook_connect_async(const char *ssid, const char *pw);
+
+/** Leave the dongle network joined with hook_connect_async(). */
+void dongle_api_gamepad_hook_disconnect(void);
+
+/** Pairing found a dongle and it adopted us: save @p pin as the paired one. */
+void dongle_api_gamepad_hook_paired(const uint8_t pin[4]);
 
 /** Transmit exactly one datagram to @p ip:@p port. The only TX path. */
 void dongle_api_gamepad_hook_udp_tx(const dongle_pkt_s *pkt, uint8_t ip[4], uint16_t port);

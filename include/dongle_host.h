@@ -15,7 +15,8 @@ void dongle_api_host_wlan_init(const dongle_cfg_host_s *cfg);
 
 void dongle_api_host_wlan_task(void); 
 
-void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt);
+/** Feed one received datagram, with the address it came from. */
+void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt, const uint8_t ip[4]);
 
 /* -------------------------------------------------------------------------- */
 /* HOST API TRANSPORT                                                         */
@@ -47,6 +48,14 @@ void dongle_api_host_transport_set_transport(bool connected);
 void dongle_api_host_transport_set_player(uint8_t player_number);
 
 void dongle_api_host_transport_mark_sent(void);
+
+/**
+ * @brief Publish what the dongle is plugged into, for the beacon.
+ *
+ * Gamepads that follow the dongle switch to @p host_mode. Until this is called the beacon reports
+ * DONGLE_HOST_UNKNOWN and gamepads keep their own mode.
+ */
+void dongle_api_host_transport_set_detected(dongle_host_kind_t host_kind, dongle_mode_t host_mode);
 
 /**
  * @brief Read the latest published status (rumble / player / transport).
