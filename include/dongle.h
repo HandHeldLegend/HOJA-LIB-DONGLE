@@ -22,7 +22,7 @@ extern "C" {
 #define DONGLE_DEFAULT_WLAN_PASSWORD        "HOJA_1234"
 
 /* Bump when a packet changes. The dongle and gamepad only talk on the same version. */
-#define DONGLE_PROTOCOL_VERSION             2u
+#define DONGLE_PROTOCOL_VERSION             3u
 
 /* Every dongle's network is HOJA_WLAN_ followed by its four PIN digits */
 #define DONGLE_WLAN_SSID_PREFIX             "HOJA_WLAN_"
@@ -204,15 +204,16 @@ typedef enum
     DONGLE_PID_CORE_RELIABLE, // Reliable USB tunnel data (command replies, etc.)
     DONGLE_PID_CORE_UNRELIABLE, // High-rate input reports
     DONGLE_PID_STATUS, // Packet containing dongle_status_u data
-    DONGLE_PID_BULK_UNRELIABLE, // Unreliable USB bulk tunnel for webUSB reports
-    DONGLE_PID_CONFIG_RELIABLE, // Reliable USB tunnel data for configuration data
+    DONGLE_PID_BULK_UNRELIABLE, // The gamepad's live WebUSB input report for the config app (latest wins)
+    DONGLE_PID_CONFIG_RELIABLE, // WebUSB config traffic: app commands to the gamepad and its replies, both reliable
 } dongle_pid_t;
 
 #pragma pack(push, 1)
 typedef struct
 {
     uint16_t session;   // dongle_session_s 
-    uint16_t ack;       // Reliable packet ACK. 
+    uint16_t ack;       // Echo of the last reliable token received from the peer (0: none)
+    uint16_t token;     // Non-zero on a reliable packet: sent again until the peer echoes it in ack
     uint8_t id;         // dongle_pid_t
     uint16_t len;       // Data container used length
     uint8_t data[64];   // Data container

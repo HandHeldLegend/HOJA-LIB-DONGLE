@@ -41,6 +41,13 @@ bool dongle_api_host_transport_get_inputreport(uint8_t data[64], uint16_t *len);
  */
 bool dongle_api_host_transport_get_inputpacket(dongle_pkt_s *pkt);
 
+/** Queue a WebUSB packet from the config app for the gamepad (reliable). False if the queue is full. */
+bool dongle_api_host_transport_send_config(const uint8_t *data, uint16_t len);
+
+/** The next WebUSB packet from the gamepad for the config app: replies first, then its latest
+ *  live input report. False when there is nothing new. */
+bool dongle_api_host_transport_get_config(uint8_t data[64], uint16_t *len);
+
 void dongle_api_host_transport_set_rumble(uint8_t left, uint8_t right, uint8_t brake_left, uint8_t brake_right);
 
 void dongle_api_host_transport_set_transport(bool connected);

@@ -8,10 +8,10 @@
 
 /*
  * Wire-format guard (matches dongle_gamepad.c): with #pragma pack(push,1) the
- * packet is exactly 71 bytes (2 + 2 + 1 + 2 + 64). If padding sneaks in, the
+ * packet is exactly 73 bytes (2 + 2 + 2 + 1 + 2 + 64). If padding sneaks in, the
  * peer's length filter silently drops every datagram.
  */
-_Static_assert(sizeof(dongle_pkt_s) == 71, "dongle_pkt_s must be packed to 71 bytes");
+_Static_assert(sizeof(dongle_pkt_s) == 73, "dongle_pkt_s must be packed to 73 bytes");
 _Static_assert(sizeof(dongle_wake_s) == DONGLE_WAKE_S_LEN, "dongle_wake_s must fill the 64-byte data field");
 
 #define DONGLE_HOST_TIMEOUT_MS 5000
@@ -46,6 +46,8 @@ static uint8_t _host_mask[4]       = {DONGLE_NETMASK0, DONGLE_NETMASK1, DONGLE_N
  *   _control_rx_host_ss     W         T       WAKE / control packets
  *   _reliable_tx_host_ss    T         W       reliable host->gamepad OUT queue
  *   _detect_host_ss         T         W       what the dongle is plugged into
+ *   _config_rx_host_ss      W         T       gamepad WebUSB replies for the app
+ *   _bulk_rx_host_ss        W         T       gamepad's latest WebUSB input report
  * ========================================================================== */
 
 DONGLE_CROSSCORE_SNAPSHOT_TYPE(session, dongle_session_s);
@@ -77,14 +79,27 @@ DONGLE_CROSSCORE_FIFO_TYPE(packet, dongle_pkt_s, DONGLE_HOST_MAILBOX_LEN);
 dongle_fifo_packet_t _reliable_rx_host_ss;
 dongle_fifo_packet_t _control_rx_host_ss;
 dongle_fifo_packet_t _reliable_tx_host_ss;
+dongle_fifo_packet_t _config_rx_host_ss;
+
+/* Numbered so the transport task sends each report to the app once */
+typedef struct
+{
+    uint32_t     seq;
+    dongle_pkt_s pkt;
+} dongle_host_bulk_s;
+
+DONGLE_CROSSCORE_SNAPSHOT_TYPE(bulk, dongle_host_bulk_s);
+dongle_snapshot_bulk_t _bulk_rx_host_ss;
 
 /* WLAN-task-local state machine (owned/written only by the wlan task). */
 typedef struct
 {
     uint64_t timeout_us;     /* link watchdog deadline (absolute us) */
     uint64_t last_pump_us;   /* time of our last pump */
-    uint16_t inflight_ack;   /* non-zero while a reliable OUT awaits its echo */
+    uint16_t inflight_token; /* non-zero while a reliable OUT awaits its echo */
     dongle_pkt_s inflight_pkt;
+    uint16_t gamepad_token;  /* last reliable token from the gamepad, echoed in every packet */
+    uint32_t bulk_seq;
     bool     link_up;        /* cached link state for edge detection */
     bool     gamepad_set;    /* a gamepad is adopted, everything else is ignored */
     uint8_t  gamepad_ip[4];  /* its DHCP address */
@@ -126,7 +141,8 @@ static void _host_wlan_link_timeout_reset(uint64_t now_us)
  * FIFO, so it is the only context allowed to pop/flush it. */
 static void _host_wlan_flush_reliable_lane(void)
 {
-    _hsm.inflight_ack = 0;
+    _hsm.inflight_token = 0;
+    _hsm.gamepad_token = 0;
     memset(&_hsm.inflight_pkt, 0, sizeof(_hsm.inflight_pkt));
 
     dongle_pkt_s scratch;
@@ -184,15 +200,19 @@ static void _host_wlan_send_to_gamepad(const dongle_pkt_s *pkt)
         return;
     }
 
+    /* Every packet acknowledges the gamepad's last reliable one */
+    dongle_pkt_s tx = *pkt;
+    tx.ack = _hsm.gamepad_token;
+
     uint8_t ip[4] = {_hsm.gamepad_ip[0], _hsm.gamepad_ip[1], _hsm.gamepad_ip[2], _hsm.gamepad_ip[3]};
-    dongle_api_host_wlan_hook_udp_tx(pkt, ip, DONGLE_GAMEPAD_PORT);
+    dongle_api_host_wlan_hook_udp_tx(&tx, ip, DONGLE_GAMEPAD_PORT);
 }
 
 /* Load the next queued reliable OUT packet into the inflight slot, but only
  * while the lane is idle so we never clobber a packet still awaiting its ack. */
 static void _host_wlan_arm_inflight_reliable(void)
 {
-    if(_hsm.inflight_ack != 0)
+    if(_hsm.inflight_token != 0)
     {
         return;
     }
@@ -200,7 +220,7 @@ static void _host_wlan_arm_inflight_reliable(void)
     dongle_pkt_s pkt;
     if(dongle_fifo_packet_pop(&_reliable_tx_host_ss, &pkt))
     {
-        _hsm.inflight_ack = pkt.ack;
+        _hsm.inflight_token = pkt.token;
         _hsm.inflight_pkt = pkt;
     }
 }
@@ -225,8 +245,21 @@ void _host_wlan_send_to_transport(const dongle_pkt_s *pkt)
         dongle_fifo_packet_push(&_control_rx_host_ss, pkt);
         break;
 
+    case DONGLE_PID_CONFIG_RELIABLE:
+        /* A WebUSB reply for the config app, in order */
+        dongle_fifo_packet_push(&_config_rx_host_ss, pkt);
+        break;
+
+    case DONGLE_PID_BULK_UNRELIABLE:
+    {
+        /* The gamepad's live input report for the app: only the newest matters */
+        dongle_host_bulk_s bulk = {.seq = ++_hsm.bulk_seq, .pkt = *pkt};
+        dongle_snapshot_bulk_write(&_bulk_rx_host_ss, &bulk);
+        break;
+    }
+
     default:
-        /* STATUS/BULK/CONFIG are not received in the host role; ignore. */
+        /* STATUS is not received in the host role; ignore. */
         break;
     }
 }
@@ -237,12 +270,12 @@ static bool _host_wlan_send_reliable(void)
     _host_wlan_arm_inflight_reliable();
 
     /* Nothing awaiting ack: let the caller fall back to a STATUS packet. */
-    if(_hsm.inflight_ack == 0)
+    if(_hsm.inflight_token == 0)
     {
         return false;
     }
 
-    /* Resend the inflight packet; the gamepad must echo _hsm.inflight_ack to
+    /* Resend the inflight packet; the gamepad must echo its token to
      * retire it (handled in dongle_api_host_wlan_udp_rx). */
     _host_wlan_send_to_gamepad(&_hsm.inflight_pkt);
     return true;
@@ -256,9 +289,8 @@ static void _host_wlan_send_status(void)
     dongle_session_s session;
     dongle_snapshot_session_read(&_session_host_ss, &session);
 
-    dongle_pkt_s pkt;
+    dongle_pkt_s pkt = {0};
     pkt.session = dongle_session_pack(&session);
-    pkt.ack = 0;
     pkt.id = DONGLE_PID_STATUS;
     memcpy(pkt.data, &status, sizeof(status));
     pkt.len = sizeof(status);
@@ -491,10 +523,21 @@ void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt, const uint8_t ip[4])
         _host_wlan_schedule_timeout_reset();
     }
 
-    if((_hsm.inflight_ack != 0) && (pkt->ack == _hsm.inflight_ack))
+    if((_hsm.inflight_token != 0) && (pkt->ack == _hsm.inflight_token))
     {
-        _hsm.inflight_ack = 0;
+        _hsm.inflight_token = 0;
         _host_wlan_arm_inflight_reliable();
+    }
+
+    /* A reliable packet from the gamepad is echoed from now on and passed on only once (the
+     * gamepad resends it until it sees the echo) */
+    if(pkt->token != 0)
+    {
+        if(pkt->token == _hsm.gamepad_token)
+        {
+            return;
+        }
+        _hsm.gamepad_token = pkt->token;
     }
 
     _host_wlan_send_to_transport(pkt);
@@ -530,6 +573,7 @@ void dongle_api_host_transport_task(void)
 
         dongle_pkt_s scratch;
         while(dongle_fifo_packet_pop(&_reliable_rx_host_ss, &scratch)) { }
+        while(dongle_fifo_packet_pop(&_config_rx_host_ss, &scratch)) { }
     }
 
     _thsm.prev_link = link;
@@ -544,12 +588,55 @@ void dongle_api_host_transport_set_outputreport(const uint8_t data[64], uint16_t
     dongle_session_s session;
     dongle_snapshot_session_read(&_session_host_ss, &session);
 
-    pkt.ack = dongle_api_generate_ack();
+    pkt.ack = 0;
+    pkt.token = dongle_api_generate_ack();
     memcpy(pkt.data, data, len);
     pkt.len = len;
     pkt.id = DONGLE_PID_CORE_RELIABLE;
     pkt.session = dongle_session_pack(&session);
     _host_transport_send_to_wlan(&pkt);
+}
+
+bool dongle_api_host_transport_send_config(const uint8_t *data, uint16_t len)
+{
+    if(!data || len == 0 || len > 64)
+    {
+        return false;
+    }
+
+    dongle_session_s session;
+    dongle_snapshot_session_read(&_session_host_ss, &session);
+
+    dongle_pkt_s pkt = {0};
+    pkt.session = dongle_session_pack(&session);
+    pkt.token = dongle_api_generate_ack();
+    pkt.id = DONGLE_PID_CONFIG_RELIABLE;
+    pkt.len = len;
+    memcpy(pkt.data, data, len);
+    return dongle_fifo_packet_push(&_reliable_tx_host_ss, &pkt);
+}
+
+bool dongle_api_host_transport_get_config(uint8_t data[64], uint16_t *len)
+{
+    static uint32_t sent_seq = 0;
+    dongle_pkt_s pkt;
+
+    /* Replies first, in order; then the newest live input report not yet sent */
+    if(!dongle_fifo_packet_pop(&_config_rx_host_ss, &pkt))
+    {
+        dongle_host_bulk_s bulk;
+        if(!dongle_snapshot_bulk_read(&_bulk_rx_host_ss, &bulk) || bulk.seq == sent_seq)
+        {
+            return false;
+        }
+        sent_seq = bulk.seq;
+        pkt = bulk.pkt;
+    }
+
+    uint16_t n = (pkt.len > sizeof(pkt.data)) ? (uint16_t)sizeof(pkt.data) : pkt.len;
+    memcpy(data, pkt.data, n);
+    *len = n;
+    return n > 0;
 }
 
 /* Shared input selection: drain reliable input first (ordered, loss-free),

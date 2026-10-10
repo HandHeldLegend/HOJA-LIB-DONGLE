@@ -4,11 +4,11 @@
 
 /*
  * Compile-time guard from the guide's bring-up checklist (§14): with the
- * mandatory #pragma pack(push,1) the wire struct is exactly 71 bytes
- * (2 + 2 + 1 + 2 + 64). If padding sneaks in, the dongle's length filter
+ * mandatory #pragma pack(push,1) the wire struct is exactly 73 bytes
+ * (2 + 2 + 2 + 1 + 2 + 64). If padding sneaks in, the dongle's length filter
  * silently drops every datagram we send.
  */
-_Static_assert(sizeof(dongle_pkt_s) == 71, "dongle_pkt_s must be packed to 71 bytes");
+_Static_assert(sizeof(dongle_pkt_s) == 73, "dongle_pkt_s must be packed to 73 bytes");
 _Static_assert(sizeof(dongle_wake_s) == DONGLE_WAKE_S_LEN, "dongle_wake_s must fill the 64-byte data field");
 
 static uint8_t _dongle_host_address[4] = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONGLE_HOST_IP2, DONGLE_HOST_IP3};
@@ -24,6 +24,15 @@ static uint8_t _dongle_host_address[4] = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONG
 #define DONGLE_GAMEPAD_RESCAN_MS 1000
 
 #define DONGLE_GAMEPAD_CANDIDATES_MAX 8
+
+// WebUSB replies waiting to go to the config app (a 2 KB config block is 35 of them)
+#define DONGLE_GAMEPAD_CONFIG_QUEUE_LEN 48
+
+typedef struct
+{
+    uint16_t len;
+    uint8_t  data[64];
+} dongle_gamepad_config_pkt_s;
 
 typedef enum
 {
@@ -58,8 +67,21 @@ typedef struct
     dongle_wake_s wake;
     dongle_status_s status;
 
-    uint16_t last_reliable_ack;
-    bool have_reliable_ack;
+    uint16_t last_core_token;   /* last CORE_RELIABLE from the dongle, to drop its resends */
+    bool have_core_token;
+    uint16_t last_config_token; /* same for CONFIG_RELIABLE */
+    bool have_config_token;
+
+    /* WebUSB traffic for the config app: replies go reliably, one at a time until the dongle
+     * echoes their token; the live input report only ever sends its newest copy */
+    dongle_gamepad_config_pkt_s config_queue[DONGLE_GAMEPAD_CONFIG_QUEUE_LEN];
+    uint8_t  config_head;
+    uint8_t  config_tail;
+    uint16_t config_token; /* inflight reply's token, 0 when none */
+    dongle_gamepad_config_pkt_s config_inflight;
+    dongle_gamepad_config_pkt_s bulk;
+    bool     bulk_pending;
+    bool     last_reply_config; /* replies alternate with input reports while both have data */
 
     bool wake_replied;
 
@@ -193,6 +215,13 @@ __attribute__((weak)) void dongle_api_gamepad_hook_set_rumble(uint8_t left, uint
     (void)right_brake;
 }
 
+// Implement receiving a WebUSB packet from the config app
+__attribute__((weak)) void dongle_api_gamepad_hook_config_rx(const uint8_t data[64], uint16_t len)
+{
+    (void)data;
+    (void)len;
+}
+
 // Implement network reset callback (weak stub)
 __attribute__((weak)) void dongle_api_gamepad_hook_reset_network(void)
 {
@@ -246,8 +275,16 @@ static void _gamepad_clear_session(void)
 {
     _gp.status = (dongle_status_s){0};
 
-    _gp.last_reliable_ack = 0;
-    _gp.have_reliable_ack = false;
+    _gp.last_core_token = 0;
+    _gp.have_core_token = false;
+    _gp.last_config_token = 0;
+    _gp.have_config_token = false;
+
+    _gp.config_head = 0;
+    _gp.config_tail = 0;
+    _gp.config_token = 0;
+    _gp.bulk_pending = false;
+    _gp.last_reply_config = false;
 
     _gp.wake_replied = false;
 
@@ -543,6 +580,52 @@ static void _gamepad_build_input_reply(dongle_pkt_s *tx)
     }
 }
 
+/* Config traffic for the app, when there is some: the inflight reply (sent again until echoed),
+ * else the latest live input report. False when there is nothing to send. */
+static bool _gamepad_build_config_reply(dongle_pkt_s *tx)
+{
+    if (_gp.config_token == 0 && _gp.config_tail != _gp.config_head)
+    {
+        _gp.config_inflight = _gp.config_queue[_gp.config_tail];
+        _gp.config_tail = (uint8_t)((_gp.config_tail + 1u) % DONGLE_GAMEPAD_CONFIG_QUEUE_LEN);
+        _gp.config_token = dongle_api_generate_ack();
+    }
+
+    if (_gp.config_token != 0)
+    {
+        tx->id = DONGLE_PID_CONFIG_RELIABLE;
+        tx->token = _gp.config_token;
+        tx->len = _gp.config_inflight.len;
+        memcpy(tx->data, _gp.config_inflight.data, _gp.config_inflight.len);
+        return true;
+    }
+
+    if (_gp.bulk_pending)
+    {
+        _gp.bulk_pending = false;
+        tx->id = DONGLE_PID_BULK_UNRELIABLE;
+        tx->len = _gp.bulk.len;
+        memcpy(tx->data, _gp.bulk.data, _gp.bulk.len);
+        return true;
+    }
+
+    return false;
+}
+
+/* Every reply carries config traffic or an input report. While the app is connected they take
+ * turns, so neither the console nor the app is starved. */
+static void _gamepad_build_reply(dongle_pkt_s *tx)
+{
+    if (!_gp.last_reply_config && _gamepad_build_config_reply(tx))
+    {
+        _gp.last_reply_config = true;
+        return;
+    }
+
+    _gp.last_reply_config = false;
+    _gamepad_build_input_reply(tx);
+}
+
 static void _gamepad_build_wake_reply(dongle_pkt_s *tx)
 {
     // Session already exists
@@ -602,7 +685,13 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
      */
     dongle_pkt_s tx = {0};
     tx.session = dongle_session_pack(&_gp.session);
-    tx.ack     = rx->ack;
+    tx.ack     = rx->token;
+
+    /* The dongle has our config reply: the next one can go */
+    if (_gp.config_token != 0 && rx->ack == _gp.config_token)
+    {
+        _gp.config_token = 0;
+    }
 
     bool send_reply = true;
 
@@ -637,7 +726,7 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
         {
             _gamepad_apply_status((const dongle_status_s *)rx->data);
         }
-        _gamepad_build_input_reply(&tx);
+        _gamepad_build_reply(&tx);
         break;
 
     case DONGLE_PID_CORE_RELIABLE:
@@ -658,23 +747,35 @@ static void _gamepad_process_packet(const dongle_pkt_s *rx)
              * already processed is a duplicate and must not be re-queued (doing so
              * would emit duplicate command replies). We still fall through to send
              * a reply below, echoing rx.ack so the dongle can retire the packet. */
-            if (_gp.have_reliable_ack && rx->ack == _gp.last_reliable_ack)
+            if (_gp.have_core_token && rx->token == _gp.last_core_token)
             {
                 /* Duplicate resend; silently re-ack below without re-tunneling. */
-                DONGLE_LOGF("[DGP] Duplicate reliable OUT (ack 0x%04X), re-acking\n", rx->ack);
+                DONGLE_LOGF("[DGP] Duplicate reliable OUT (token 0x%04X), re-acking\n", rx->token);
             }
             else
             {
                 dongle_api_gamepad_hook_set_outputreport(rx->data, rx->len);
-                _gp.last_reliable_ack = rx->ack;
-                _gp.have_reliable_ack = true;
+                _gp.last_core_token = rx->token;
+                _gp.have_core_token = true;
             }
         }
-        _gamepad_build_input_reply(&tx);
+        _gamepad_build_reply(&tx);
+        break;
+
+    case DONGLE_PID_CONFIG_RELIABLE:
+        _gamepad_adopted();
+
+        /* A command from the config app; its resends carry the same token */
+        if (rx->len > 0 && !(_gp.have_config_token && rx->token == _gp.last_config_token))
+        {
+            dongle_api_gamepad_hook_config_rx(rx->data, rx->len);
+            _gp.last_config_token = rx->token;
+            _gp.have_config_token = true;
+        }
+        _gamepad_build_reply(&tx);
         break;
 
     case DONGLE_PID_BULK_UNRELIABLE:
-    case DONGLE_PID_CONFIG_RELIABLE:
     default:
         /* Dongle sent something we do not answer. Stay silent (no proactive TX). */
         DONGLE_LOGF("[DGP] Ignoring packet id %u (len %u)\n", (unsigned)rx->id, rx->len);
@@ -808,6 +909,37 @@ void dongle_api_gamepad_set_identity(dongle_mode_t mode, uint16_t vid, uint16_t 
 
     /* A new session makes the dongle bring its console up as us */
     _gamepad_refresh_wake();
+}
+
+bool dongle_api_gamepad_config_send(const uint8_t *data, uint16_t len)
+{
+    if (!data || len == 0 || len > 64)
+    {
+        return false;
+    }
+
+    uint8_t next = (uint8_t)((_gp.config_head + 1u) % DONGLE_GAMEPAD_CONFIG_QUEUE_LEN);
+    if (next == _gp.config_tail)
+    {
+        return false;
+    }
+
+    _gp.config_queue[_gp.config_head].len = len;
+    memcpy(_gp.config_queue[_gp.config_head].data, data, len);
+    _gp.config_head = next;
+    return true;
+}
+
+void dongle_api_gamepad_bulk_send(const uint8_t *data, uint16_t len)
+{
+    if (!data || len == 0 || len > 64)
+    {
+        return;
+    }
+
+    _gp.bulk.len = len;
+    memcpy(_gp.bulk.data, data, len);
+    _gp.bulk_pending = true;
 }
 
 bool dongle_api_gamepad_adopted(void)

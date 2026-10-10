@@ -75,6 +75,15 @@ void dongle_api_gamepad_set_identity(dongle_mode_t mode, uint16_t vid, uint16_t 
                                      const uint8_t name[DONGLE_WAKE_NAME_LEN],
                                      const uint8_t manufacturer[DONGLE_WAKE_MANUFACTURER_LEN]);
 
+/**
+ * @brief Queue a WebUSB reply for the config app (sent reliably, in order).
+ * @return false when the queue is full.
+ */
+bool dongle_api_gamepad_config_send(const uint8_t *data, uint16_t len);
+
+/** @brief Offer the latest live WebUSB input report for the config app (only the newest is sent). */
+void dongle_api_gamepad_bulk_send(const uint8_t *data, uint16_t len);
+
 /** True while a dongle has adopted us (it sends us STATUS). */
 bool dongle_api_gamepad_adopted(void);
 
@@ -133,6 +142,9 @@ void dongle_api_gamepad_hook_set_transport(bool connected);
 
 /** Notify of a rumble/brake amplitude change (drive haptics). */
 void dongle_api_gamepad_hook_set_rumble(uint8_t left, uint8_t right, uint8_t left_brake, uint8_t right_brake);
+
+/** A WebUSB packet from the config app, through the dongle. */
+void dongle_api_gamepad_hook_config_rx(const uint8_t data[64], uint16_t len);
 
 /** Notify that the protocol state was reset (link lost) so the platform can
  *  tear down / re-init its network stack as needed. */
