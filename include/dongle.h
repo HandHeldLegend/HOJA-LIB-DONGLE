@@ -97,6 +97,7 @@ typedef enum
     DONGLE_HOST_SWITCH   = 2,
     DONGLE_HOST_N64      = 3,
     DONGLE_HOST_GAMECUBE = 4,
+    DONGLE_HOST_SNES     = 5, // NES or SNES: the same controller port
 } dongle_host_kind_t;
 
 /* Payload of the dongle's WAKE beacon: who it is and what it is plugged into */
