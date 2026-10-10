@@ -111,6 +111,7 @@ static dongle_host_sm _hsm;
 typedef struct
 {
     dongle_link_status_t prev_link; /* last observed link snapshot (edge detect) */
+    dongle_wake_s        wake;      /* the adopted gamepad's identity, while the link is up */
 } dongle_host_transport_sm;
 
 static dongle_host_transport_sm _thsm = { .prev_link = DONGLE_LINK_DOWN };
@@ -404,6 +405,7 @@ static void _host_transport_process_wake(const dongle_pkt_s *pkt)
                     (const char *)wake.name, (const char *)wake.manufacturer);
 
         /* Platform owns the (re)enumeration; it may teardown internally first. */
+        _thsm.wake = wake;
         dongle_api_host_transport_hook_transport_bringup(&wake);
 
         dongle_session_unpack(wake.session, &session);
@@ -721,6 +723,17 @@ void dongle_api_host_transport_get_status(dongle_status_s *out)
     {
         dongle_snapshot_status_read(&_status_host_ss, out);
     }
+}
+
+bool dongle_api_host_transport_get_gamepad(dongle_wake_s *out)
+{
+    if(!out || dongle_api_host_transport_get_link_status() != DONGLE_LINK_UP)
+    {
+        return false;
+    }
+
+    *out = _thsm.wake;
+    return true;
 }
 
 dongle_link_status_t dongle_api_host_transport_get_link_status(void)

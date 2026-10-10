@@ -83,6 +83,9 @@ void dongle_api_host_transport_get_status(dongle_status_s *out);
  */
 dongle_link_status_t dongle_api_host_transport_get_link_status(void);
 
+/** The connected gamepad's identity (its WAKE reply). False while no gamepad is connected. */
+bool dongle_api_host_transport_get_gamepad(dongle_wake_s *out);
+
 /* -------------------------------------------------------------------------- */
 /* HOST HOOKS (platform implements the strong versions)                       */
 /* -------------------------------------------------------------------------- */
