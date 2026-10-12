@@ -69,6 +69,7 @@ typedef enum
     DONGLE_LINK_MSG_REPORT = 3, /**< gamepad -> dongle: an input report that must arrive (up to 64 bytes) */
     DONGLE_LINK_MSG_OUTPUT = 4, /**< dongle -> gamepad: an output report from the console (up to 64 bytes) */
     DONGLE_LINK_MSG_CONFIG = 5, /**< both: config app traffic (up to 64 bytes) */
+    DONGLE_LINK_MSG_TIMING = 6, /**< dongle -> gamepad: int16 (little endian), move the report clock by this many us (+ = later) */
 } dongle_link_msg_t;
 
 /** Largest reliable message: type byte plus the largest payload. */
@@ -82,6 +83,18 @@ typedef struct
     uint16_t report_interval_us; /**< live input pacing the dongle asks for (0: the gamepad's own) */
 } dongle_link_host_s;
 #pragma pack(pop)
+
+/*
+ * Timing: the dongle sends the console a report on its own clock (every USB poll period it
+ * picks up the newest one). It measures how long before each send the gamepad's reports
+ * arrive and moves the gamepad's report clock (DONGLE_LINK_MSG_TIMING) so that all but the
+ * latest tenth of them arrive at least DONGLE_LINK_STEER_LEAD_US early: late enough to be
+ * fresh, early enough not to miss the send.
+ */
+#define DONGLE_LINK_STEER_LEAD_US     150u /* margin before the send, for the latest tenth */
+#define DONGLE_LINK_STEER_SAMPLES     32u  /* arrivals per measurement */
+#define DONGLE_LINK_STEER_SETTLE      8u   /* arrivals ignored after a move */
+#define DONGLE_LINK_STEER_DEADBAND_US 100u /* smaller errors are left alone */
 
 /** Report pacing the dongle asks for, per host. */
 #define DONGLE_LINK_INTERVAL_PC_US      2000u /* PC: 500 Hz */

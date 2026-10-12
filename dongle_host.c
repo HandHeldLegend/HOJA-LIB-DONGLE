@@ -40,6 +40,7 @@ static uint8_t _host_mask[4]       = {DONGLE_NETMASK0, DONGLE_NETMASK1, DONGLE_N
  *   _session_host_ss        T         W       adopted session (mode/id)
  *   _status_host_ss         T         W       rumble/player/transport out
  *   _pump_host_ss           T         W       host-paced TX deadline
+ *   _mark_host_ss           T         W       last console send (link timing)
  *   _link_host_ss           W         T       wlan link status (UP/DOWN)
  *   _unreliable_rx_host_ss  W         T       latest unreliable input report
  *   _reliable_rx_host_ss    W         T       reliable input report queue
@@ -58,6 +59,10 @@ dongle_snapshot_status_t _status_host_ss;
 
 DONGLE_CROSSCORE_SNAPSHOT_TYPE(pump, uint64_t);
 dongle_snapshot_pump_t _pump_host_ss;
+
+/* When the console's last report went out (Bluetooth link timing) */
+DONGLE_CROSSCORE_SNAPSHOT_TYPE(mark, uint64_t);
+dongle_snapshot_mark_t _mark_host_ss;
 
 DONGLE_CROSSCORE_SNAPSHOT_TYPE(link, uint8_t);
 dongle_snapshot_link_t _link_host_ss;
@@ -557,11 +562,92 @@ void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt, const uint8_t ip[4])
 
 static dongle_pkt_s _link_tx_pending; /* popped from the OUT lane, not yet sent */
 static bool _link_tx_have;
+static uint8_t _link_tx_peeked; /* dongle_link_msg_t handed out by peek, 0 when none */
+
+/* Timing (see dongle_link.h): how early reports arrive, measured against the console's sends */
+static uint16_t _link_interval_us; /* the pacing we asked for: arrivals repeat with this period */
+static int16_t  _link_steer_err[DONGLE_LINK_STEER_SAMPLES];
+static uint8_t  _link_steer_n;
+static uint8_t  _link_steer_skip;
+static bool     _link_steer_due;
+static int16_t  _link_steer_shift;
+
+static void _host_link_steer_reset(void)
+{
+    _link_steer_n = 0;
+    _link_steer_skip = DONGLE_LINK_STEER_SETTLE;
+    _link_steer_due = false;
+}
+
+/* One arrival: how far from DONGLE_LINK_STEER_LEAD_US before the next send. Every
+ * DONGLE_LINK_STEER_SAMPLES of them, move the gamepad's clock by the latest tenth's error. */
+static void _host_link_steer_sample(uint64_t now_us)
+{
+    if (_link_steer_due || !_link_interval_us)
+    {
+        return;
+    }
+    if (_link_steer_skip)
+    {
+        _link_steer_skip--;
+        return;
+    }
+
+    uint64_t mark_us;
+    dongle_snapshot_mark_read(&_mark_host_ss, &mark_us);
+    const uint32_t period = _link_interval_us;
+    if (!mark_us || now_us < mark_us || (now_us - mark_us) > 64u * period)
+    {
+        return; /* the console is not taking reports */
+    }
+
+    /* Sends repeat every USB period, a whole number of our periods: one comes up every period */
+    const int32_t lead = (int32_t)(period - (uint32_t)((now_us - mark_us) % period));
+    int32_t err = lead - (int32_t)DONGLE_LINK_STEER_LEAD_US; /* > 0: could come later */
+    if (err > (int32_t)(period / 2u))
+    {
+        err -= (int32_t)period; /* just after a send: late */
+    }
+    _link_steer_err[_link_steer_n++] = (int16_t)err;
+    if (_link_steer_n < DONGLE_LINK_STEER_SAMPLES)
+    {
+        return;
+    }
+    _link_steer_n = 0;
+
+    /* Insertion sort: 32 values */
+    for (uint8_t i = 1; i < DONGLE_LINK_STEER_SAMPLES; i++)
+    {
+        int16_t v = _link_steer_err[i];
+        uint8_t j = i;
+        while (j > 0 && _link_steer_err[j - 1] > v)
+        {
+            _link_steer_err[j] = _link_steer_err[j - 1];
+            j--;
+        }
+        _link_steer_err[j] = v;
+    }
+    int32_t shift = _link_steer_err[DONGLE_LINK_STEER_SAMPLES / 10u];
+    if (shift < (int32_t)DONGLE_LINK_STEER_DEADBAND_US && shift > -(int32_t)DONGLE_LINK_STEER_DEADBAND_US)
+    {
+        return;
+    }
+
+    /* Big moves in steps: the error is measured again after each one */
+    const int32_t limit = (int32_t)(period / 4u);
+    if (shift > limit) shift = limit;
+    if (shift < -limit) shift = -limit;
+    _link_steer_shift = (int16_t)shift;
+    _link_steer_due = true;
+}
 
 void dongle_api_host_link_init(const dongle_cfg_host_s *cfg)
 {
     _host_wlan_reset();
     _link_tx_have = false;
+    _link_tx_peeked = 0;
+    _link_interval_us = 0;
+    _host_link_steer_reset();
 
     if (cfg != NULL)
     {
@@ -578,6 +664,9 @@ void dongle_api_host_link_set_up(bool up)
     {
         _link_tx_have = false;
     }
+    _link_tx_peeked = 0;
+    _link_interval_us = 0;
+    _host_link_steer_reset();
 }
 
 bool dongle_api_host_link_get_host(dongle_link_host_s *out)
@@ -597,6 +686,13 @@ bool dongle_api_host_link_get_host(dongle_link_host_s *out)
     out->beacon.fw_version = _host_fw_version;
     out->report_interval_us = (detect.host_kind == DONGLE_HOST_PC) ? DONGLE_LINK_INTERVAL_PC_US
                                                                      : DONGLE_LINK_INTERVAL_DEFAULT_US;
+
+    /* The gamepad paces with this from now on: measure afresh */
+    if (_link_interval_us != out->report_interval_us)
+    {
+        _link_interval_us = out->report_interval_us;
+        _host_link_steer_reset();
+    }
     return true;
 }
 
@@ -609,6 +705,7 @@ void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len)
     }
     pkt.id = DONGLE_PID_CORE_UNRELIABLE;
     _host_wlan_send_to_transport(&pkt);
+    _host_link_steer_sample(dongle_api_hook_get_time_us_u64());
 }
 
 void dongle_api_host_link_rx_bulk(const uint8_t *data, uint16_t len)
@@ -658,6 +755,14 @@ bool dongle_api_host_link_peek_msg(uint8_t msg[DONGLE_LINK_MSG_MAX], uint16_t *l
     {
         return false;
     }
+    if (_link_steer_due)
+    {
+        msg[0] = DONGLE_LINK_MSG_TIMING;
+        memcpy(&msg[1], &_link_steer_shift, sizeof(_link_steer_shift));
+        *len = (uint16_t)(1u + sizeof(_link_steer_shift));
+        _link_tx_peeked = DONGLE_LINK_MSG_TIMING;
+        return true;
+    }
     if (!_link_tx_have)
     {
         if (!dongle_fifo_packet_pop(&_reliable_tx_host_ss, &_link_tx_pending))
@@ -670,6 +775,7 @@ bool dongle_api_host_link_peek_msg(uint8_t msg[DONGLE_LINK_MSG_MAX], uint16_t *l
     uint16_t n = (_link_tx_pending.len > 64u) ? 64u : _link_tx_pending.len;
     msg[0] = (_link_tx_pending.id == DONGLE_PID_CONFIG_RELIABLE) ? (uint8_t)DONGLE_LINK_MSG_CONFIG
                                                                  : (uint8_t)DONGLE_LINK_MSG_OUTPUT;
+    _link_tx_peeked = msg[0];
     memcpy(&msg[1], _link_tx_pending.data, n);
     *len = (uint16_t)(n + 1u);
     return true;
@@ -677,7 +783,18 @@ bool dongle_api_host_link_peek_msg(uint8_t msg[DONGLE_LINK_MSG_MAX], uint16_t *l
 
 void dongle_api_host_link_msg_sent(void)
 {
-    _link_tx_have = false;
+    if (_link_tx_peeked == DONGLE_LINK_MSG_TIMING)
+    {
+        /* Measure again once the move has taken effect */
+        _link_steer_due = false;
+        _link_steer_n = 0;
+        _link_steer_skip = DONGLE_LINK_STEER_SETTLE;
+    }
+    else if (_link_tx_peeked)
+    {
+        _link_tx_have = false;
+    }
+    _link_tx_peeked = 0;
 }
 
 void dongle_api_host_link_get_status(dongle_status_s *out)
@@ -901,6 +1018,7 @@ void dongle_api_host_transport_mark_sent(void)
     }
     else
     {
+        dongle_snapshot_mark_write(&_mark_host_ss, &this_time);
         last_time = this_time;
         next_time = this_time + (delta >> 1);
         dongle_snapshot_pump_write(&_pump_host_ss, &next_time);

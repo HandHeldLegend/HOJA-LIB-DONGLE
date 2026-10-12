@@ -199,6 +199,12 @@ __attribute__((weak)) bool dongle_api_gamepad_hook_get_inputreport(uint8_t data[
     return false;
 }
 
+// Implement moving the link's report clock
+__attribute__((weak)) void dongle_api_gamepad_hook_shift_reports(int16_t delta_us)
+{
+    (void)delta_us;
+}
+
 // Implement forwarding output reports
 __attribute__((weak)) void dongle_api_gamepad_hook_set_outputreport(const uint8_t data[64], uint16_t len)
 {
@@ -1086,6 +1092,14 @@ void dongle_api_gamepad_link_rx_msg(const uint8_t *msg, uint16_t len)
         if (plen > 0)
         {
             dongle_api_gamepad_hook_config_rx(data, plen);
+        }
+        break;
+    case DONGLE_LINK_MSG_TIMING:
+        if (plen == sizeof(int16_t))
+        {
+            int16_t delta;
+            memcpy(&delta, payload, sizeof(delta));
+            dongle_api_gamepad_hook_shift_reports(delta);
         }
         break;
     default:

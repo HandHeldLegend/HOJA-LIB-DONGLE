@@ -183,6 +183,9 @@ void dongle_api_gamepad_hook_udp_tx(const dongle_pkt_s *pkt, uint8_t ip[4], uint
  *  @return true if a report is available; false to reply empty (ack-only). */
 bool dongle_api_gamepad_hook_get_inputreport(uint8_t data[64], uint16_t *len, bool *reliable);
 
+/** Link: move the live report clock by @p delta_us (+ = later), as the dongle asks (DONGLE_LINK_MSG_TIMING). */
+void dongle_api_gamepad_hook_shift_reports(int16_t delta_us);
+
 /** Deliver a host OUT report (Switch command / config) to the upper layer. */
 void dongle_api_gamepad_hook_set_outputreport(const uint8_t data[64], uint16_t len);
 
