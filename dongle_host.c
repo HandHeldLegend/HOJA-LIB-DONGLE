@@ -596,12 +596,16 @@ static uint32_t _link_queue_min_cur;  /* arrival - send time, gamepad and dongle
 static uint32_t _link_queue_min_prev;
 static uint32_t _link_queue_window_us;
 static uint8_t  _link_queue_run;
+static uint8_t  _link_phase_n;    /* arrivals in this placement window */
+static uint8_t  _link_phase_late; /* ...of them late */
 
 static void _host_link_steer_reset(void)
 {
     _link_queue_have_cur = false;
     _link_queue_have_prev = false;
     _link_queue_run = 0;
+    _link_phase_n = 0;
+    _link_phase_late = 0;
     _link_steer_n = 0;
     _link_steer_skip = DONGLE_LINK_STEER_SETTLE;
     _link_steer_due = false;
@@ -739,18 +743,53 @@ static void _host_link_queue_sample(uint32_t now, uint32_t t_pad_us)
     {
         return; /* a move is on its way or settling */
     }
-    if (offset - base <= DONGLE_LINK_QUEUE_LATE_US)
+
+    const bool late = (offset - base) > DONGLE_LINK_QUEUE_LATE_US;
+    const bool per_slot_pair = _link_interval_us < 2u * DONGLE_LINK_SLOT_PAIR_US;
+    if (per_slot_pair)
+    {
+        _link_phase_n++;
+        _link_phase_late += late ? 1u : 0u;
+    }
+
+    if (late)
+    {
+        if (++_link_queue_run >= DONGLE_LINK_QUEUE_RUN)
+        {
+            _link_queue_run = 0;
+            _link_steer_shift = (int16_t)_link_interval_us; /* skip one: the waiting report goes */
+            _link_steer_due = true;
+            return;
+        }
+    }
+    else
     {
         _link_queue_run = 0;
-        return;
     }
-    if (++_link_queue_run < DONGLE_LINK_QUEUE_RUN)
+
+    if (!per_slot_pair || _link_phase_n < DONGLE_LINK_PHASE_SAMPLES)
     {
         return;
     }
-    _link_queue_run = 0;
-    _link_steer_shift = (int16_t)_link_interval_us;
-    _link_steer_due = true;
+    int16_t shift = 0;
+    if (_link_phase_late > DONGLE_LINK_PHASE_LATE_MAX)
+    {
+        shift = -(int16_t)DONGLE_LINK_PHASE_EARLIER_US;
+        /* Waits grow by that much: learn the quickest again */
+        _link_queue_have_cur = false;
+        _link_queue_have_prev = false;
+    }
+    else if (_link_phase_late == 0)
+    {
+        shift = (int16_t)DONGLE_LINK_PHASE_LATER_US;
+    }
+    _link_phase_n = 0;
+    _link_phase_late = 0;
+    if (shift)
+    {
+        _link_steer_shift = shift;
+        _link_steer_due = true;
+    }
 }
 
 void dongle_api_host_link_init(const dongle_cfg_host_s *cfg)
