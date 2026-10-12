@@ -2,6 +2,7 @@
 #define HOJA_LIB_DONGLE_GAMEPAD_H
 
 #include <dongle.h>
+#include <dongle_link.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -92,6 +93,57 @@ bool dongle_api_gamepad_adopted(void);
  * @return false until one has been heard.
  */
 bool dongle_api_gamepad_get_dongle(dongle_beacon_s *out);
+
+/* -------------------------------------------------------------------------- */
+/* GAMEPAD API LINK (Bluetooth)                                               */
+/* -------------------------------------------------------------------------- */
+/*
+ * The gamepad side of a Bluetooth dongle link (see dongle_link.h), in place of the WLAN
+ * protocol. The platform runs the link: it connects to the dongle, opens the reliable
+ * channel and paces the live reports. These calls carry the same session, identity,
+ * status, mode following and config traffic as the WLAN protocol, through the same hooks
+ * (get_inputreport, set_outputreport, set_player, set_transport, set_rumble, config_rx,
+ * mode_request). dongle_api_gamepad_set_identity(), _config_send(), _bulk_send(),
+ * _adopted() and _get_dongle() work for both.
+ *
+ * Order on a link: the dongle sends its host info (HOST); unless that changes our mode
+ * (hook_mode_request), we send our identity (WAKE), and from then on we are adopted:
+ * live reports flow and the dongle's console comes up as us.
+ */
+
+/** Initialize the link side with the gamepad's identity (as dongle_api_gamepad_wlan_init()). */
+void dongle_api_gamepad_link_init(const dongle_cfg_gamepad_s *cfg);
+
+/** The reliable channel to a dongle opened (up) or the link went away. Each link is a new session. */
+void dongle_api_gamepad_link_set_up(bool up);
+
+/** A reliable channel message arrived from the dongle: [type][payload]. */
+void dongle_api_gamepad_link_rx_msg(const uint8_t *msg, uint16_t len);
+
+/** The dongle's status arrived (link OUTPUT DONGLE_LINK_OUT_STATUS). */
+void dongle_api_gamepad_link_rx_status(const uint8_t *data, uint16_t len);
+
+/**
+ * The next reliable message for the dongle ([type][payload]: WAKE, input reports that must
+ * arrive, config replies). The same message comes back until dongle_api_gamepad_link_msg_sent().
+ */
+bool dongle_api_gamepad_link_peek_msg(uint8_t msg[DONGLE_LINK_MSG_MAX], uint16_t *len);
+
+/** The message from dongle_api_gamepad_link_peek_msg() went out. */
+void dongle_api_gamepad_link_msg_sent(void);
+
+/**
+ * Take the next input report (hook_get_inputreport), once adopted. A live one comes back
+ * trimmed for the air (DONGLE_LINK_IN_REPORT payload) and returns true; one that must
+ * arrive is queued for the reliable channel instead and returns false.
+ */
+bool dongle_api_gamepad_link_next_report(uint8_t out[DONGLE_LINK_REPORT_MAX], uint16_t *len);
+
+/** The newest live WebUSB report for the config app, once (DONGLE_LINK_IN_BULK). */
+bool dongle_api_gamepad_link_take_bulk(uint8_t out[64], uint16_t *len);
+
+/** Report pacing the dongle asked for (us), 0 until it said. */
+uint16_t dongle_api_gamepad_link_interval_us(void);
 
 /* -------------------------------------------------------------------------- */
 /* GAMEPAD HOOKS (platform implements the strong versions)                    */

@@ -28,6 +28,9 @@ static uint8_t _dongle_host_address[4] = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONG
 // WebUSB replies waiting to go to the config app (a 2 KB config block is 35 of them)
 #define DONGLE_GAMEPAD_CONFIG_QUEUE_LEN 48
 
+// Bluetooth link: input reports that must arrive (command replies), waiting for the reliable channel
+#define DONGLE_GAMEPAD_LINK_REPORTS 8
+
 typedef struct
 {
     uint16_t len;
@@ -117,6 +120,15 @@ typedef struct
     bool pairing;
 
     bool rx_got;
+
+    /* Bluetooth link (dongle_link.h): no scanning, joining or tokens, the link does that */
+    bool     link_up;          /* reliable channel open */
+    bool     link_wake_due;    /* our identity goes out next */
+    uint16_t link_interval_us; /* pacing the dongle asked for */
+    dongle_gamepad_config_pkt_s link_reports[DONGLE_GAMEPAD_LINK_REPORTS]; /* input reports that must arrive */
+    uint8_t  link_report_head;
+    uint8_t  link_report_tail;
+    uint8_t  link_peeked;      /* dongle_link_msg_t of the message handed out by peek, 0 when none */
 
     dongle_gamepad_logging_sm logging;
 } dongle_gamepad_sm;
@@ -825,7 +837,8 @@ static void _gamepad_report_stats(uint64_t now_us)
 /* GAMEPAD API                                                                */
 /* -------------------------------------------------------------------------- */
 
-void dongle_api_gamepad_wlan_init(const dongle_cfg_gamepad_s *cfg)
+/* Identity, events and pairing choice from cfg; everything else starts empty */
+static void _gamepad_init(const dongle_cfg_gamepad_s *cfg)
 {
     memset(&_gp, 0, sizeof(_gp));
 
@@ -847,6 +860,11 @@ void dongle_api_gamepad_wlan_init(const dongle_cfg_gamepad_s *cfg)
         dongle_wake_strcopy(_gp.name, DONGLE_WAKE_NAME_LEN, NULL);
         dongle_wake_strcopy(_gp.manufacturer, DONGLE_WAKE_MANUFACTURER_LEN, NULL);
     }
+}
+
+void dongle_api_gamepad_wlan_init(const dongle_cfg_gamepad_s *cfg)
+{
+    _gamepad_init(cfg);
 
     _gp.wlan_link = DONGLE_LINK_UNDEFINED;
     _gp.wlan_connphase = DONGLE_GAMEPAD_CONNPHASE_DOWN;
@@ -909,6 +927,7 @@ void dongle_api_gamepad_set_identity(dongle_mode_t mode, uint16_t vid, uint16_t 
 
     /* A new session makes the dongle bring its console up as us */
     _gamepad_refresh_wake();
+    _gp.link_wake_due = _gp.link_up;
 }
 
 bool dongle_api_gamepad_config_send(const uint8_t *data, uint16_t len)
@@ -971,6 +990,233 @@ void dongle_api_gamepad_udp_rx(const dongle_pkt_s *pkt)
      * datagram from the dongle endpoint has arrived. At most one reply is
      * emitted (one TX per RX). */
     _gamepad_process_packet(pkt);
+}
+
+/* -------------------------------------------------------------------------- */
+/* GAMEPAD API LINK (Bluetooth)                                               */
+/* -------------------------------------------------------------------------- */
+
+void dongle_api_gamepad_link_init(const dongle_cfg_gamepad_s *cfg)
+{
+    _gamepad_init(cfg);
+    _gp.wlan_connphase = DONGLE_GAMEPAD_CONNPHASE_DOWN;
+    _gp.candidate = -1;
+
+    /* Pick the first session id before any traffic flows. */
+    _gamepad_refresh_wake();
+
+    DONGLE_LOGF("[DGP] Link init (mode %u, vid 0x%04X, pid 0x%04X)\n", (unsigned)_gp.mode, _gp.vid, _gp.pid);
+}
+
+void dongle_api_gamepad_link_set_up(bool up)
+{
+    /* A new session either way: what was queued belonged to the last one */
+    _gamepad_clear_session();
+    _gp.link_up = up;
+    _gp.link_wake_due = false; /* the dongle's host info comes first */
+    _gp.link_interval_us = 0;
+    _gp.link_report_head = 0;
+    _gp.link_report_tail = 0;
+    _gp.link_peeked = 0;
+    _gp.wlan_connphase = up ? DONGLE_GAMEPAD_CONNPHASE_CONNECTED : DONGLE_GAMEPAD_CONNPHASE_DOWN;
+
+    DONGLE_LOGF("[DGP] Link %s\n", up ? "UP" : "DOWN");
+}
+
+/* The dongle's host info: follow its mode unless ours was chosen, then tell it who we are */
+static void _gamepad_link_host(const uint8_t *payload, uint16_t len)
+{
+    dongle_link_host_s host;
+    if (len != sizeof(host))
+    {
+        return;
+    }
+    memcpy(&host, payload, sizeof(host));
+
+    _gp.dongle = host.beacon;
+    _gp.dongle_seen = true;
+    _gp.link_interval_us = host.report_interval_us;
+
+    _gp.dongle_mismatch = (host.beacon.protocol != DONGLE_PROTOCOL_VERSION);
+    if (_gp.dongle_mismatch || _gp.mode_pending)
+    {
+        return;
+    }
+
+    const dongle_mode_t host_mode = (dongle_mode_t)host.beacon.host_mode;
+    if (!_gp.mode_forced && host.beacon.host_kind != DONGLE_HOST_UNKNOWN && host_mode != DONGLE_MODE_UNKNOWN &&
+        host_mode != _gp.mode && dongle_api_gamepad_hook_mode_request(host_mode))
+    {
+        /* dongle_api_gamepad_set_identity() follows, and sends the WAKE */
+        DONGLE_LOGF("[DGP] Dongle wants mode %u, switching from %u\n", (unsigned)host_mode, (unsigned)_gp.mode);
+        _gp.mode_pending = true;
+        return;
+    }
+
+    if (_gp.wlan_connphase != DONGLE_GAMEPAD_CONNPHASE_UP)
+    {
+        _gp.link_wake_due = true;
+    }
+}
+
+void dongle_api_gamepad_link_rx_msg(const uint8_t *msg, uint16_t len)
+{
+    if (!msg || len < 1 || len > DONGLE_LINK_MSG_MAX || !_gp.link_up)
+    {
+        return;
+    }
+
+    const uint8_t *payload = &msg[1];
+    const uint16_t plen = (uint16_t)(len - 1u);
+    uint8_t data[64] = {0};
+    memcpy(data, payload, plen);
+
+    switch ((dongle_link_msg_t)msg[0])
+    {
+    case DONGLE_LINK_MSG_HOST:
+        _gamepad_link_host(payload, plen);
+        break;
+    case DONGLE_LINK_MSG_OUTPUT:
+        if (plen > 0)
+        {
+            dongle_api_gamepad_hook_set_outputreport(data, plen);
+        }
+        break;
+    case DONGLE_LINK_MSG_CONFIG:
+        if (plen > 0)
+        {
+            dongle_api_gamepad_hook_config_rx(data, plen);
+        }
+        break;
+    default:
+        break; /* WAKE and REPORT only go the other way */
+    }
+}
+
+void dongle_api_gamepad_link_rx_status(const uint8_t *data, uint16_t len)
+{
+    if (data && len == sizeof(dongle_status_s) && _gp.link_up)
+    {
+        dongle_status_s status;
+        memcpy(&status, data, sizeof(status));
+        _gamepad_apply_status(&status);
+    }
+}
+
+bool dongle_api_gamepad_link_peek_msg(uint8_t msg[DONGLE_LINK_MSG_MAX], uint16_t *len)
+{
+    if (!msg || !len || !_gp.link_up)
+    {
+        return false;
+    }
+
+    if (_gp.link_wake_due)
+    {
+        _gp.link_peeked = DONGLE_LINK_MSG_WAKE;
+        msg[0] = DONGLE_LINK_MSG_WAKE;
+        memcpy(&msg[1], &_gp.wake, sizeof(_gp.wake));
+        *len = (uint16_t)(1u + sizeof(_gp.wake));
+        return true;
+    }
+    if (_gp.wlan_connphase != DONGLE_GAMEPAD_CONNPHASE_UP)
+    {
+        return false;
+    }
+
+    const dongle_gamepad_config_pkt_s *pkt;
+    if (_gp.link_report_tail != _gp.link_report_head)
+    {
+        _gp.link_peeked = DONGLE_LINK_MSG_REPORT;
+        pkt = &_gp.link_reports[_gp.link_report_tail];
+    }
+    else if (_gp.config_tail != _gp.config_head)
+    {
+        _gp.link_peeked = DONGLE_LINK_MSG_CONFIG;
+        pkt = &_gp.config_queue[_gp.config_tail];
+    }
+    else
+    {
+        return false;
+    }
+
+    msg[0] = _gp.link_peeked;
+    memcpy(&msg[1], pkt->data, pkt->len);
+    *len = (uint16_t)(1u + pkt->len);
+    return true;
+}
+
+void dongle_api_gamepad_link_msg_sent(void)
+{
+    switch ((dongle_link_msg_t)_gp.link_peeked)
+    {
+    case DONGLE_LINK_MSG_WAKE:
+        _gp.link_wake_due = false;
+        _gp.wlan_connphase = DONGLE_GAMEPAD_CONNPHASE_UP;
+        DONGLE_LOGF("[DGP] Identity sent (session 0x%03X)\n", _gp.session.id);
+        break;
+    case DONGLE_LINK_MSG_REPORT:
+        _gp.link_report_tail = (uint8_t)((_gp.link_report_tail + 1u) % DONGLE_GAMEPAD_LINK_REPORTS);
+        break;
+    case DONGLE_LINK_MSG_CONFIG:
+        _gp.config_tail = (uint8_t)((_gp.config_tail + 1u) % DONGLE_GAMEPAD_CONFIG_QUEUE_LEN);
+        break;
+    default:
+        break;
+    }
+    _gp.link_peeked = 0;
+}
+
+bool dongle_api_gamepad_link_next_report(uint8_t out[DONGLE_LINK_REPORT_MAX], uint16_t *len)
+{
+    if (!out || !len || _gp.wlan_connphase != DONGLE_GAMEPAD_CONNPHASE_UP)
+    {
+        return false;
+    }
+
+    uint8_t report[64] = {0};
+    uint16_t n = 0;
+    bool reliable = false;
+    if (!dongle_api_gamepad_hook_get_inputreport(report, &n, &reliable))
+    {
+        return false;
+    }
+    if (n > 64)
+    {
+        n = 64;
+    }
+
+    if (reliable)
+    {
+        uint8_t next = (uint8_t)((_gp.link_report_head + 1u) % DONGLE_GAMEPAD_LINK_REPORTS);
+        if (next != _gp.link_report_tail && n > 0)
+        {
+            _gp.link_reports[_gp.link_report_head].len = n;
+            memcpy(_gp.link_reports[_gp.link_report_head].data, report, n);
+            _gp.link_report_head = next;
+        }
+        return false;
+    }
+
+    _gp.logging.input_reports++;
+    *len = dongle_link_trim_report(report, n, out);
+    return true;
+}
+
+bool dongle_api_gamepad_link_take_bulk(uint8_t out[64], uint16_t *len)
+{
+    if (!out || !len || !_gp.bulk_pending || _gp.wlan_connphase != DONGLE_GAMEPAD_CONNPHASE_UP)
+    {
+        return false;
+    }
+    _gp.bulk_pending = false;
+    *len = _gp.bulk.len;
+    memcpy(out, _gp.bulk.data, _gp.bulk.len);
+    return true;
+}
+
+uint16_t dongle_api_gamepad_link_interval_us(void)
+{
+    return _gp.link_interval_us;
 }
 
 void dongle_api_gamepad_wlan_task(void)
