@@ -100,7 +100,7 @@ typedef struct
 #define DONGLE_LINK_STEER_LEAD_US     150u /* margin before the send */
 #define DONGLE_LINK_STEER_LATE_PCT    3u   /* reports allowed to miss their send */
 #define DONGLE_LINK_STEER_SAMPLES     64u  /* arrivals per measurement */
-#define DONGLE_LINK_STEER_SETTLE      4u   /* arrivals ignored after a move */
+#define DONGLE_LINK_STEER_SETTLE      8u   /* arrivals ignored after a move */
 #define DONGLE_LINK_STEER_DEADBAND_US 50u  /* smaller errors are left alone */
 
 /*
@@ -108,12 +108,14 @@ typedef struct
  * exactly as fast as they can leave, so a report the radio had to send again (or two handed
  * over within one slot pair) leaves the next one waiting, and every report after it a slot
  * pair late, for good. Each report carries the time it was handed to the radio; the dongle
- * sees the wait, and when a report arrives more than DONGLE_LINK_QUEUE_LATE_US later than the
- * link's quickest, it moves the gamepad's clock a whole period later: one report is skipped
+ * sees the wait, and when DONGLE_LINK_QUEUE_RUN reports in a row arrive more than
+ * DONGLE_LINK_QUEUE_LATE_US later than the link's quickest, it moves the gamepad's clock a whole period later: one report is skipped
  * and the waiting one goes out on time.
  */
 #define DONGLE_LINK_QUEUE_LATE_US   900u    /* most of a slot pair: a report was waiting ahead */
-#define DONGLE_LINK_QUEUE_RUN       1u
+/* A run: a single report can also be late from where the gamepad's clock (which drifts against
+ * the radio's) has moved its hand-over in the slot pair, with nothing waiting */
+#define DONGLE_LINK_QUEUE_RUN       3u
 #define DONGLE_LINK_QUEUE_WINDOW_US 500000u /* the quickest wait is taken over this long, twice */
 
 /** Report pacing the dongle asks for, per host. */
