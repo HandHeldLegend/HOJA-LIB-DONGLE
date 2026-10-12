@@ -25,8 +25,9 @@ static uint8_t _dongle_host_address[4] = {DONGLE_HOST_IP0, DONGLE_HOST_IP1, DONG
 
 #define DONGLE_GAMEPAD_CANDIDATES_MAX 8
 
-// WebUSB replies waiting to go to the config app (a 2 KB config block is 35 of them)
-#define DONGLE_GAMEPAD_CONFIG_QUEUE_LEN 48
+// WebUSB replies waiting to go to the config app: room for the largest config block in one go (the
+// input block is 66 replies), so a platform never has to wait for room while answering a command
+#define DONGLE_GAMEPAD_CONFIG_QUEUE_LEN 80
 
 // Bluetooth link: input reports that must arrive (command replies), waiting for the reliable channel
 #define DONGLE_GAMEPAD_LINK_REPORTS 8
@@ -965,6 +966,11 @@ void dongle_api_gamepad_bulk_send(const uint8_t *data, uint16_t len)
     _gp.bulk.len = len;
     memcpy(_gp.bulk.data, data, len);
     _gp.bulk_pending = true;
+}
+
+bool dongle_api_gamepad_config_pending(void)
+{
+    return _gp.config_tail != _gp.config_head || _gp.config_token != 0;
 }
 
 bool dongle_api_gamepad_adopted(void)

@@ -85,6 +85,9 @@ bool dongle_api_gamepad_config_send(const uint8_t *data, uint16_t len);
 /** @brief Offer the latest live WebUSB input report for the config app (only the newest is sent). */
 void dongle_api_gamepad_bulk_send(const uint8_t *data, uint16_t len);
 
+/** True while config replies are still waiting to go out (start the app's next command after them). */
+bool dongle_api_gamepad_config_pending(void);
+
 /** True while a dongle has adopted us (it sends us STATUS). */
 bool dongle_api_gamepad_adopted(void);
 
