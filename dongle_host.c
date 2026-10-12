@@ -580,6 +580,7 @@ static uint8_t _link_tx_peeked; /* dongle_link_msg_t handed out by peek, 0 when 
 
 /* Timing (see dongle_link.h): each report's delay, against the console's sends */
 static uint16_t _link_interval_us; /* the pacing we asked for: arrivals repeat with this period */
+static uint16_t _link_pc_interval_us = DONGLE_LINK_INTERVAL_PC_US;
 static int32_t  _link_steer_delay[DONGLE_LINK_STEER_SAMPLES]; /* arrival - (first arrival + k periods) */
 static uint32_t _link_steer_t0;    /* arrival of the window's first report */
 static uint32_t _link_steer_k;     /* reports (sequence numbers) since then */
@@ -797,7 +798,7 @@ bool dongle_api_host_link_get_host(dongle_link_host_s *out)
     out->beacon.host_kind  = detect.host_kind;
     out->beacon.host_mode  = (detect.host_kind == DONGLE_HOST_UNKNOWN) ? DONGLE_MODE_UNKNOWN : detect.host_mode;
     out->beacon.fw_version = _host_fw_version;
-    out->report_interval_us = (detect.host_kind == DONGLE_HOST_PC) ? DONGLE_LINK_INTERVAL_PC_US
+    out->report_interval_us = (detect.host_kind == DONGLE_HOST_PC) ? _link_pc_interval_us
                                                                      : DONGLE_LINK_INTERVAL_DEFAULT_US;
 
     /* The gamepad paces with this from now on: measure afresh */
@@ -821,6 +822,11 @@ void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len, uint16
     const uint64_t now = dongle_api_hook_get_time_us_u64();
     _host_link_queue_sample((uint32_t)now, t_pad_us);
     _host_link_steer_sample(now, seq);
+}
+
+void dongle_api_host_link_set_pc_interval(uint16_t interval_us)
+{
+    _link_pc_interval_us = interval_us ? interval_us : DONGLE_LINK_INTERVAL_PC_US;
 }
 
 void dongle_api_host_link_rx_bulk(const uint8_t *data, uint16_t len)

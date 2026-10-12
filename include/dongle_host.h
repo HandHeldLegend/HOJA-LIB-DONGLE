@@ -41,6 +41,10 @@ bool dongle_api_host_link_get_host(dongle_link_host_s *out);
  *  number and the gamepad's time (us, its own clock) handing it to its radio. */
 void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len, uint16_t seq, uint32_t t_pad_us);
 
+/** Report pacing to ask for when plugged into a computer (us; 0 = DONGLE_LINK_INTERVAL_PC_US).
+ *  Goes to the gamepad with the next host info. */
+void dongle_api_host_link_set_pc_interval(uint16_t interval_us);
+
 /** The gamepad's live WebUSB report for the config app arrived (DONGLE_LINK_IN_BULK). */
 void dongle_api_host_link_rx_bulk(const uint8_t *data, uint16_t len);
 
