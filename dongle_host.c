@@ -60,8 +60,14 @@ dongle_snapshot_status_t _status_host_ss;
 DONGLE_CROSSCORE_SNAPSHOT_TYPE(pump, uint64_t);
 dongle_snapshot_pump_t _pump_host_ss;
 
-/* When the console's last report went out (Bluetooth link timing) */
-DONGLE_CROSSCORE_SNAPSHOT_TYPE(mark, uint64_t);
+/* When the console's last report went out, and how often it takes one (Bluetooth link timing) */
+typedef struct
+{
+    uint64_t t_us;
+    uint32_t period_us;
+} dongle_host_mark_s;
+
+DONGLE_CROSSCORE_SNAPSHOT_TYPE(mark, dongle_host_mark_s);
 dongle_snapshot_mark_t _mark_host_ss;
 
 DONGLE_CROSSCORE_SNAPSHOT_TYPE(link, uint8_t);
@@ -624,11 +630,21 @@ static void _host_link_steer_sample(uint64_t now_us, uint16_t seq)
     }
     _link_steer_n = 0;
 
-    uint64_t mark_us;
-    dongle_snapshot_mark_read(&_mark_host_ss, &mark_us);
+    dongle_host_mark_s mark;
+    dongle_snapshot_mark_read(&_mark_host_ss, &mark);
+    const uint64_t mark_us = mark.t_us;
     if (!mark_us || now_us < mark_us || (now_us - mark_us) > 64u * period)
     {
         return; /* the console is not taking reports */
+    }
+
+    /* Only when the console's sends repeat every whole number of our periods. Otherwise (a
+     * report every slot pair against a computer's 2 ms) every send has a new report anyway. */
+    const uint32_t usb_periods = (mark.period_us + period / 2u) / period;
+    const int32_t usb_rest = (int32_t)mark.period_us - (int32_t)(usb_periods * period);
+    if (!usb_periods || usb_rest > 100 || usb_rest < -100)
+    {
+        return;
     }
 
     /* Insertion sort: 64 values */
@@ -1062,7 +1078,8 @@ void dongle_api_host_transport_mark_sent(void)
     }
     else
     {
-        dongle_snapshot_mark_write(&_mark_host_ss, &this_time);
+        dongle_host_mark_s mark = {.t_us = this_time, .period_us = (uint32_t)delta};
+        dongle_snapshot_mark_write(&_mark_host_ss, &mark);
         last_time = this_time;
         next_time = this_time + (delta >> 1);
         dongle_snapshot_pump_write(&_pump_host_ss, &next_time);

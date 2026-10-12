@@ -104,7 +104,11 @@ typedef struct
 #define DONGLE_LINK_STEER_DEADBAND_US 50u  /* smaller errors are left alone */
 
 /** Report pacing the dongle asks for, per host. */
-#define DONGLE_LINK_INTERVAL_PC_US      2000u /* PC: 500 Hz */
+/* PC: every slot pair (Bluetooth Classic's 1.25 ms grid). Reports cross the air on that
+ * grid whatever the gamepad's clock, so at 2 ms they arrive 1.25 and 2.5 ms apart and some of
+ * the computer's 2 ms polls would get two and some none. One per slot pair puts a new report
+ * in every poll, at most a slot pair old. */
+#define DONGLE_LINK_INTERVAL_PC_US      1250u
 #define DONGLE_LINK_INTERVAL_DEFAULT_US 4000u /* Switch and consoles: 250 Hz */
 
 /**
