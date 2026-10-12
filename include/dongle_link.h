@@ -103,6 +103,19 @@ typedef struct
 #define DONGLE_LINK_STEER_SETTLE      8u   /* arrivals ignored after a move */
 #define DONGLE_LINK_STEER_DEADBAND_US 50u  /* smaller errors are left alone */
 
+/*
+ * The gamepad's radio queue. At one report per slot pair the gamepad hands its radio reports
+ * exactly as fast as they can leave, so a report the radio had to send again (or two handed
+ * over within one slot pair) leaves the next one waiting, and every report after it a slot
+ * pair late, for good. Each report carries the time it was handed to the radio; the dongle
+ * sees the wait, and when DONGLE_LINK_QUEUE_RUN reports in a row arrive more than
+ * DONGLE_LINK_QUEUE_LATE_US later than the link's quickest, it moves the gamepad's clock a
+ * whole period later: one report is skipped and the waiting one goes out on time.
+ */
+#define DONGLE_LINK_QUEUE_LATE_US   900u    /* most of a slot pair: a report was waiting ahead */
+#define DONGLE_LINK_QUEUE_RUN       3u
+#define DONGLE_LINK_QUEUE_WINDOW_US 500000u /* the quickest wait is taken over this long, twice */
+
 /** Report pacing the dongle asks for, per host. */
 /* PC: every slot pair (Bluetooth Classic's 1.25 ms grid). Reports cross the air on that
  * grid whatever the gamepad's clock, so at 2 ms they arrive 1.25 and 2.5 ms apart and some of

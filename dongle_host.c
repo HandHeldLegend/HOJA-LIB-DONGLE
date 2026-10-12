@@ -589,8 +589,19 @@ static uint8_t  _link_steer_skip;
 static bool     _link_steer_due;
 static int16_t  _link_steer_shift;
 
+/* The gamepad's radio queue (see dongle_link.h): each report's wait, against the quickest */
+static bool     _link_queue_have_cur;
+static bool     _link_queue_have_prev;
+static uint32_t _link_queue_min_cur;  /* arrival - send time, gamepad and dongle clocks: modular */
+static uint32_t _link_queue_min_prev;
+static uint32_t _link_queue_window_us;
+static uint8_t  _link_queue_run;
+
 static void _host_link_steer_reset(void)
 {
+    _link_queue_have_cur = false;
+    _link_queue_have_prev = false;
+    _link_queue_run = 0;
     _link_steer_n = 0;
     _link_steer_skip = DONGLE_LINK_STEER_SETTLE;
     _link_steer_due = false;
@@ -691,6 +702,57 @@ static void _host_link_steer_sample(uint64_t now_us, uint16_t seq)
     _link_steer_due = true;
 }
 
+/* One arrival and the gamepad's time handing it to its radio. A run of late ones means a report
+ * is waiting in the gamepad's radio: skip one period. */
+static void _host_link_queue_sample(uint32_t now, uint32_t t_pad_us)
+{
+    if (!_link_interval_us)
+    {
+        return;
+    }
+
+    /* The quickest wait over the current and the last window: the clocks drift apart slowly */
+    const uint32_t offset = now - t_pad_us;
+    if (_link_queue_have_cur && (uint32_t)(now - _link_queue_window_us) >= DONGLE_LINK_QUEUE_WINDOW_US)
+    {
+        _link_queue_min_prev = _link_queue_min_cur;
+        _link_queue_have_prev = true;
+        _link_queue_have_cur = false;
+    }
+    if (!_link_queue_have_cur)
+    {
+        _link_queue_min_cur = offset;
+        _link_queue_have_cur = true;
+        _link_queue_window_us = now;
+    }
+    else if ((int32_t)(offset - _link_queue_min_cur) < 0)
+    {
+        _link_queue_min_cur = offset;
+    }
+    uint32_t base = _link_queue_min_cur;
+    if (_link_queue_have_prev && (int32_t)(_link_queue_min_prev - base) < 0)
+    {
+        base = _link_queue_min_prev;
+    }
+
+    if (_link_steer_due || _link_steer_skip)
+    {
+        return; /* a move is on its way or settling */
+    }
+    if (offset - base <= DONGLE_LINK_QUEUE_LATE_US)
+    {
+        _link_queue_run = 0;
+        return;
+    }
+    if (++_link_queue_run < DONGLE_LINK_QUEUE_RUN)
+    {
+        return;
+    }
+    _link_queue_run = 0;
+    _link_steer_shift = (int16_t)_link_interval_us;
+    _link_steer_due = true;
+}
+
 void dongle_api_host_link_init(const dongle_cfg_host_s *cfg)
 {
     _host_wlan_reset();
@@ -746,7 +808,7 @@ bool dongle_api_host_link_get_host(dongle_link_host_s *out)
     return true;
 }
 
-void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len, uint16_t seq)
+void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len, uint16_t seq, uint32_t t_pad_us)
 {
     dongle_pkt_s pkt = {0};
     if (!payload || !dongle_link_untrim_report(payload, len, pkt.data, &pkt.len))
@@ -755,7 +817,9 @@ void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len, uint16
     }
     pkt.id = DONGLE_PID_CORE_UNRELIABLE;
     _host_wlan_send_to_transport(&pkt);
-    _host_link_steer_sample(dongle_api_hook_get_time_us_u64(), seq);
+    const uint64_t now = dongle_api_hook_get_time_us_u64();
+    _host_link_queue_sample((uint32_t)now, t_pad_us);
+    _host_link_steer_sample(now, seq);
 }
 
 void dongle_api_host_link_rx_bulk(const uint8_t *data, uint16_t len)

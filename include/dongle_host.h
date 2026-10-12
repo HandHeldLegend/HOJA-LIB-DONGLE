@@ -37,8 +37,9 @@ void dongle_api_host_link_set_up(bool up);
 /** The host info to send the gamepad (DONGLE_LINK_MSG_HOST). False until host detection finished. */
 bool dongle_api_host_link_get_host(dongle_link_host_s *out);
 
-/** A live input report arrived (DONGLE_LINK_IN_REPORT payload, trimmed), with the link's sequence number. */
-void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len, uint16_t seq);
+/** A live input report arrived (DONGLE_LINK_IN_REPORT payload, trimmed), with the link's sequence
+ *  number and the gamepad's time (us, its own clock) handing it to its radio. */
+void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len, uint16_t seq, uint32_t t_pad_us);
 
 /** The gamepad's live WebUSB report for the config app arrived (DONGLE_LINK_IN_BULK). */
 void dongle_api_host_link_rx_bulk(const uint8_t *data, uint16_t len);
