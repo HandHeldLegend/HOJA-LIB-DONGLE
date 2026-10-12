@@ -68,6 +68,9 @@ void dongle_api_host_transport_set_outputreport(const uint8_t data[64], uint16_t
 
 bool dongle_api_host_transport_get_inputreport(uint8_t data[64], uint16_t *len);
 
+/** True when the gamepad sent an input report the console has not taken yet. */
+bool dongle_api_host_transport_input_new(void);
+
 /**
  * @brief Pop the next input as a full packet (reliable-first, then unreliable).
  *

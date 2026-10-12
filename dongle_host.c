@@ -70,6 +70,10 @@ dongle_snapshot_link_t _link_host_ss;
 DONGLE_CROSSCORE_SNAPSHOT_TYPE(packet, dongle_pkt_s);
 dongle_snapshot_packet_t _unreliable_rx_host_ss;
 
+/* Counts writes of _unreliable_rx_host_ss (W), so the transport can tell a new report (T) */
+static atomic_uint _unreliable_rx_count;
+static unsigned _unreliable_tx_count; /* T: the count when the console last took a report */
+
 typedef struct
 {
     uint8_t host_kind; /* dongle_host_kind_t, DONGLE_HOST_UNKNOWN until detected */
@@ -238,6 +242,10 @@ void _host_wlan_send_to_transport(const dongle_pkt_s *pkt)
     case DONGLE_PID_CORE_UNRELIABLE:
         /* Latest-wins: only the newest input report matters. */
         dongle_snapshot_packet_write(&_unreliable_rx_host_ss, pkt);
+        /* One writer: no read-modify-write needed (the Cortex-M0+ has none) */
+        atomic_store_explicit(&_unreliable_rx_count,
+                              atomic_load_explicit(&_unreliable_rx_count, memory_order_relaxed) + 1u,
+                              memory_order_release);
         break;
 
     case DONGLE_PID_CORE_RELIABLE:
@@ -580,7 +588,7 @@ static void _host_link_steer_reset(void)
 }
 
 /* One arrival: how far from DONGLE_LINK_STEER_LEAD_US before the next send. Every
- * DONGLE_LINK_STEER_SAMPLES of them, move the gamepad's clock by the latest tenth's error. */
+ * DONGLE_LINK_STEER_SAMPLES of them, move the gamepad's clock by the latest quarter's error. */
 static void _host_link_steer_sample(uint64_t now_us)
 {
     if (_link_steer_due || !_link_interval_us)
@@ -627,7 +635,7 @@ static void _host_link_steer_sample(uint64_t now_us)
         }
         _link_steer_err[j] = v;
     }
-    int32_t shift = _link_steer_err[DONGLE_LINK_STEER_SAMPLES / 10u];
+    int32_t shift = _link_steer_err[DONGLE_LINK_STEER_RANK];
     if (shift < (int32_t)DONGLE_LINK_STEER_DEADBAND_US && shift > -(int32_t)DONGLE_LINK_STEER_DEADBAND_US)
     {
         return;
@@ -908,10 +916,20 @@ static bool _host_transport_pop_input(dongle_pkt_s *pkt)
 {
     if(!dongle_fifo_packet_pop(&_reliable_rx_host_ss, pkt))
     {
+        /* Count first: a report that lands during the read is new again next time */
+        _unreliable_tx_count = atomic_load_explicit(&_unreliable_rx_count, memory_order_acquire);
         dongle_snapshot_packet_read(&_unreliable_rx_host_ss, pkt);
     }
 
     return pkt->len > 0;
+}
+
+bool dongle_api_host_transport_input_new(void)
+{
+    /* A reliable report waiting (this task is that queue's consumer), or a new live one */
+    return atomic_load_explicit(&_reliable_rx_host_ss.head, memory_order_relaxed) !=
+               atomic_load_explicit(&_reliable_rx_host_ss.tail, memory_order_acquire) ||
+           atomic_load_explicit(&_unreliable_rx_count, memory_order_acquire) != _unreliable_tx_count;
 }
 
 bool dongle_api_host_transport_get_inputreport(uint8_t data[64], uint16_t *len)
