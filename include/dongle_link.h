@@ -111,24 +111,10 @@ typedef struct
  * sees the wait, and when a report arrives more than DONGLE_LINK_QUEUE_LATE_US later than the
  * link's quickest, it moves the gamepad's clock a whole period later: one report is skipped
  * and the waiting one goes out on time.
- *
- * Where in the slot pair the gamepad hands its radio a report matters too. Its clock wobbles
- * (its task loop); handed over just after a slot starts, a report waits for the next one,
- * and the one after it queues behind. At one report per slot pair the dongle moves the
- * gamepad's clock DONGLE_LINK_PHASE_EARLIER_US earlier whenever more than
- * DONGLE_LINK_PHASE_LATE_MAX of DONGLE_LINK_PHASE_SAMPLES arrivals were late, and
- * DONGLE_LINK_PHASE_LATER_US later when none were: the reports end up handed over just
- * before a slot, waiting the least, with the wobble on the early side of it.
  */
 #define DONGLE_LINK_QUEUE_LATE_US   900u    /* most of a slot pair: a report was waiting ahead */
 #define DONGLE_LINK_QUEUE_RUN       1u
 #define DONGLE_LINK_QUEUE_WINDOW_US 500000u /* the quickest wait is taken over this long, twice */
-
-#define DONGLE_LINK_SLOT_PAIR_US      1250u
-#define DONGLE_LINK_PHASE_SAMPLES     128u
-#define DONGLE_LINK_PHASE_LATE_MAX    3u
-#define DONGLE_LINK_PHASE_EARLIER_US  125u
-#define DONGLE_LINK_PHASE_LATER_US    50u
 
 /** Report pacing the dongle asks for, per host. */
 /* PC: every slot pair (Bluetooth Classic's 1.25 ms grid). Reports cross the air on that
