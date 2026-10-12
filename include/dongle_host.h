@@ -2,6 +2,7 @@
 #define HOJA_LIB_DONGLE_HOST_H
 
 #include <dongle.h>
+#include <dongle_link.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +18,45 @@ void dongle_api_host_wlan_task(void);
 
 /** Feed one received datagram, with the address it came from. */
 void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt, const uint8_t ip[4]);
+
+/* -------------------------------------------------------------------------- */
+/* HOST API LINK (Bluetooth)                                                  */
+/* -------------------------------------------------------------------------- */
+/*
+ * The radio side of a Bluetooth dongle. The platform runs the link (see dongle_link.h)
+ * and calls these from its radio core, in place of the WLAN task: they feed the same
+ * queues the transport task and the console cores read.
+ */
+
+/** Reset the link side. cfg gives the board and firmware for the host info (may be NULL). */
+void dongle_api_host_link_init(const dongle_cfg_host_s *cfg);
+
+/** A gamepad connected (reliable channel open) or went away. */
+void dongle_api_host_link_set_up(bool up);
+
+/** The host info to send the gamepad (DONGLE_LINK_MSG_HOST). False until host detection finished. */
+bool dongle_api_host_link_get_host(dongle_link_host_s *out);
+
+/** A live input report arrived (DONGLE_LINK_IN_REPORT payload, trimmed). */
+void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len);
+
+/** The gamepad's live WebUSB report for the config app arrived (DONGLE_LINK_IN_BULK). */
+void dongle_api_host_link_rx_bulk(const uint8_t *data, uint16_t len);
+
+/** A reliable channel message arrived: [type][payload]. */
+void dongle_api_host_link_rx_msg(const uint8_t *msg, uint16_t len);
+
+/**
+ * The next reliable message for the gamepad ([type][payload]: console output reports
+ * and config app traffic). The same message comes back until dongle_api_host_link_msg_sent().
+ */
+bool dongle_api_host_link_peek_msg(uint8_t msg[DONGLE_LINK_MSG_MAX], uint16_t *len);
+
+/** The message from dongle_api_host_link_peek_msg() went out. */
+void dongle_api_host_link_msg_sent(void);
+
+/** The latest status for the gamepad (DONGLE_LINK_OUT_STATUS). */
+void dongle_api_host_link_get_status(dongle_status_s *out);
 
 /* -------------------------------------------------------------------------- */
 /* HOST API TRANSPORT                                                         */

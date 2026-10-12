@@ -546,6 +546,149 @@ void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt, const uint8_t ip[4])
 }
 
 /* -------------------------------------------------------------------------- */
+/* HOST API LINK (Bluetooth)                                                  */
+/* -------------------------------------------------------------------------- */
+/*
+ * Same lanes as the WLAN task: received traffic goes to the transport task through
+ * _host_wlan_send_to_transport(), the link state through _host_wlan_set_link(), and the
+ * reliable OUT lane (console output reports, config traffic) is drained here. The link
+ * itself delivers in order and resends, so there are no tokens or acks.
+ */
+
+static dongle_pkt_s _link_tx_pending; /* popped from the OUT lane, not yet sent */
+static bool _link_tx_have;
+
+void dongle_api_host_link_init(const dongle_cfg_host_s *cfg)
+{
+    _host_wlan_reset();
+    _link_tx_have = false;
+
+    if (cfg != NULL)
+    {
+        _host_board = cfg->board;
+        _host_fw_version = cfg->fw_version;
+    }
+}
+
+void dongle_api_host_link_set_up(bool up)
+{
+    _hsm.gamepad_set = up;
+    _host_wlan_set_link(up);
+    if (!up)
+    {
+        _link_tx_have = false;
+    }
+}
+
+bool dongle_api_host_link_get_host(dongle_link_host_s *out)
+{
+    dongle_host_detect_s detect;
+    dongle_snapshot_detect_read(&_detect_host_ss, &detect);
+
+    if (!out || !detect.done)
+    {
+        return false;
+    }
+
+    out->beacon.protocol   = DONGLE_PROTOCOL_VERSION;
+    out->beacon.board      = _host_board;
+    out->beacon.host_kind  = detect.host_kind;
+    out->beacon.host_mode  = (detect.host_kind == DONGLE_HOST_UNKNOWN) ? DONGLE_MODE_UNKNOWN : detect.host_mode;
+    out->beacon.fw_version = _host_fw_version;
+    out->report_interval_us = (detect.host_kind == DONGLE_HOST_PC) ? DONGLE_LINK_INTERVAL_PC_US
+                                                                     : DONGLE_LINK_INTERVAL_DEFAULT_US;
+    return true;
+}
+
+void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len)
+{
+    dongle_pkt_s pkt = {0};
+    if (!payload || !dongle_link_untrim_report(payload, len, pkt.data, &pkt.len))
+    {
+        return;
+    }
+    pkt.id = DONGLE_PID_CORE_UNRELIABLE;
+    _host_wlan_send_to_transport(&pkt);
+}
+
+void dongle_api_host_link_rx_bulk(const uint8_t *data, uint16_t len)
+{
+    if (!data || len == 0 || len > 64)
+    {
+        return;
+    }
+    dongle_pkt_s pkt = {0};
+    pkt.id = DONGLE_PID_BULK_UNRELIABLE;
+    pkt.len = len;
+    memcpy(pkt.data, data, len);
+    _host_wlan_send_to_transport(&pkt);
+}
+
+void dongle_api_host_link_rx_msg(const uint8_t *msg, uint16_t len)
+{
+    if (!msg || len < 1 || len > DONGLE_LINK_MSG_MAX)
+    {
+        return;
+    }
+
+    dongle_pkt_s pkt = {0};
+    switch ((dongle_link_msg_t)msg[0])
+    {
+    case DONGLE_LINK_MSG_WAKE:
+        pkt.id = DONGLE_PID_WAKE;
+        break;
+    case DONGLE_LINK_MSG_REPORT:
+        pkt.id = DONGLE_PID_CORE_RELIABLE;
+        break;
+    case DONGLE_LINK_MSG_CONFIG:
+        pkt.id = DONGLE_PID_CONFIG_RELIABLE;
+        break;
+    default:
+        return; /* HOST and OUTPUT only go the other way */
+    }
+
+    pkt.len = (uint16_t)(len - 1u);
+    memcpy(pkt.data, &msg[1], pkt.len);
+    _host_wlan_send_to_transport(&pkt);
+}
+
+bool dongle_api_host_link_peek_msg(uint8_t msg[DONGLE_LINK_MSG_MAX], uint16_t *len)
+{
+    if (!msg || !len)
+    {
+        return false;
+    }
+    if (!_link_tx_have)
+    {
+        if (!dongle_fifo_packet_pop(&_reliable_tx_host_ss, &_link_tx_pending))
+        {
+            return false;
+        }
+        _link_tx_have = true;
+    }
+
+    uint16_t n = (_link_tx_pending.len > 64u) ? 64u : _link_tx_pending.len;
+    msg[0] = (_link_tx_pending.id == DONGLE_PID_CONFIG_RELIABLE) ? (uint8_t)DONGLE_LINK_MSG_CONFIG
+                                                                 : (uint8_t)DONGLE_LINK_MSG_OUTPUT;
+    memcpy(&msg[1], _link_tx_pending.data, n);
+    *len = (uint16_t)(n + 1u);
+    return true;
+}
+
+void dongle_api_host_link_msg_sent(void)
+{
+    _link_tx_have = false;
+}
+
+void dongle_api_host_link_get_status(dongle_status_s *out)
+{
+    if (out)
+    {
+        dongle_snapshot_status_read(&_status_host_ss, out);
+    }
+}
+
+/* -------------------------------------------------------------------------- */
 /* HOST API TRANSPORT                                                         */
 /* -------------------------------------------------------------------------- */
 
