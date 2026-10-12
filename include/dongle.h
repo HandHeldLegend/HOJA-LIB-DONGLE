@@ -87,6 +87,7 @@ typedef enum
     DONGLE_BOARD_HOJA    = 1,
     DONGLE_BOARD_PICO_W  = 2,
     DONGLE_BOARD_PICO2_W = 3,
+    DONGLE_BOARD_PC_APP  = 4, // HHL Gamepad Link on a PC, over the PC's Bluetooth (dongle_link.h)
 } dongle_board_t;
 
 /* What the dongle found itself plugged into */

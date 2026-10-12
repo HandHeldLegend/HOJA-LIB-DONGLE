@@ -126,6 +126,31 @@ typedef struct
 #define DONGLE_LINK_INTERVAL_PC_US      1250u
 #define DONGLE_LINK_INTERVAL_DEFAULT_US 4000u /* Switch and consoles: 250 Hz */
 
+/*
+ * The PC app (HHL Gamepad Link) in the dongle's place, over the PC's own Bluetooth. The gamepad
+ * pages the PC it paired with as an SInput gamepad, finds the app's RFCOMM channel in SDP
+ * (DONGLE_LINK_APP_UUID, else DONGLE_LINK_APP_CHANNEL) and opens it. The traffic is the link's,
+ * with the app sending dongle_link_host_s and dongle_status_s as a dongle does. RFCOMM is one
+ * reliable byte stream, so each piece travels as a frame [lane][length][payload]:
+ *
+ *   lane                          direction      payload
+ *   ----------------------------  -------------  ------------------------------------------------
+ *   DONGLE_LINK_APP_LANE_INPUT    gamepad -> PC  [seq u16][sampled_us u32][DONGLE_LINK_IN_REPORT payload]
+ *   DONGLE_LINK_APP_LANE_BULK     gamepad -> PC  the gamepad's live WebUSB report
+ *   DONGLE_LINK_APP_LANE_MSG      both           one reliable message, [dongle_link_msg_t][payload]
+ *   DONGLE_LINK_APP_LANE_STATUS   PC -> gamepad  dongle_status_s
+ *
+ * sampled_us is the gamepad's clock when it built the report: the app plays reports out at that
+ * spacing. Live input is still latest wins: the gamepad sends one only when its radio has room.
+ */
+#define DONGLE_LINK_APP_CHANNEL 5u
+#define DONGLE_LINK_APP_UUID     { 0xBB, 0xEB, 0xD8, 0x68, 0x28, 0x9D, 0x49, 0x30, 0x81, 0xDD, 0x45, 0xD8, 0x82, 0xB6, 0x4B, 0xBF }
+#define DONGLE_LINK_APP_LANE_INPUT  1u
+#define DONGLE_LINK_APP_LANE_BULK   2u
+#define DONGLE_LINK_APP_LANE_MSG    3u
+#define DONGLE_LINK_APP_LANE_STATUS 4u
+#define DONGLE_LINK_APP_FRAME_MAX   (2u + 6u + DONGLE_LINK_REPORT_MAX)
+
 /**
  * Trim a live input report for the air: writes [full length][bytes up to the last
  * non-zero one] into out and returns the payload length (at least 1).
