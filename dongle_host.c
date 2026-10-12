@@ -572,9 +572,12 @@ static dongle_pkt_s _link_tx_pending; /* popped from the OUT lane, not yet sent 
 static bool _link_tx_have;
 static uint8_t _link_tx_peeked; /* dongle_link_msg_t handed out by peek, 0 when none */
 
-/* Timing (see dongle_link.h): how early reports arrive, measured against the console's sends */
+/* Timing (see dongle_link.h): each report's delay, against the console's sends */
 static uint16_t _link_interval_us; /* the pacing we asked for: arrivals repeat with this period */
-static int16_t  _link_steer_err[DONGLE_LINK_STEER_SAMPLES];
+static int32_t  _link_steer_delay[DONGLE_LINK_STEER_SAMPLES]; /* arrival - (first arrival + k periods) */
+static uint32_t _link_steer_t0;    /* arrival of the window's first report */
+static uint32_t _link_steer_k;     /* reports (sequence numbers) since then */
+static uint16_t _link_steer_seq;   /* last sequence number */
 static uint8_t  _link_steer_n;
 static uint8_t  _link_steer_skip;
 static bool     _link_steer_due;
@@ -587,9 +590,10 @@ static void _host_link_steer_reset(void)
     _link_steer_due = false;
 }
 
-/* One arrival: how far from DONGLE_LINK_STEER_LEAD_US before the next send. Every
- * DONGLE_LINK_STEER_SAMPLES of them, move the gamepad's clock by the latest quarter's error. */
-static void _host_link_steer_sample(uint64_t now_us)
+/* One arrival, report sequence number seq. Every DONGLE_LINK_STEER_SAMPLES of them, place the
+ * window's undelayed clock plus the delay that covers all but DONGLE_LINK_STEER_LATE_PCT percent
+ * DONGLE_LINK_STEER_LEAD_US before a send, by moving the gamepad's clock. */
+static void _host_link_steer_sample(uint64_t now_us, uint16_t seq)
 {
     if (_link_steer_due || !_link_interval_us)
     {
@@ -601,47 +605,69 @@ static void _host_link_steer_sample(uint64_t now_us)
         return;
     }
 
-    uint64_t mark_us;
-    dongle_snapshot_mark_read(&_mark_host_ss, &mark_us);
     const uint32_t period = _link_interval_us;
-    if (!mark_us || now_us < mark_us || (now_us - mark_us) > 64u * period)
+    const uint32_t now = (uint32_t)now_us;
+    if (_link_steer_n == 0)
     {
-        return; /* the console is not taking reports */
+        _link_steer_t0 = now;
+        _link_steer_k = 0;
     }
-
-    /* Sends repeat every USB period, a whole number of our periods: one comes up every period */
-    const int32_t lead = (int32_t)(period - (uint32_t)((now_us - mark_us) % period));
-    int32_t err = lead - (int32_t)DONGLE_LINK_STEER_LEAD_US; /* > 0: could come later */
-    if (err > (int32_t)(period / 2u))
+    else
     {
-        err -= (int32_t)period; /* just after a send: late */
+        _link_steer_k += (uint16_t)(seq - _link_steer_seq); /* lost reports still count */
     }
-    _link_steer_err[_link_steer_n++] = (int16_t)err;
+    _link_steer_seq = seq;
+    _link_steer_delay[_link_steer_n++] = (int32_t)(now - _link_steer_t0 - _link_steer_k * period);
     if (_link_steer_n < DONGLE_LINK_STEER_SAMPLES)
     {
         return;
     }
     _link_steer_n = 0;
 
-    /* Insertion sort: 32 values */
+    uint64_t mark_us;
+    dongle_snapshot_mark_read(&_mark_host_ss, &mark_us);
+    if (!mark_us || now_us < mark_us || (now_us - mark_us) > 64u * period)
+    {
+        return; /* the console is not taking reports */
+    }
+
+    /* Insertion sort: 64 values */
     for (uint8_t i = 1; i < DONGLE_LINK_STEER_SAMPLES; i++)
     {
-        int16_t v = _link_steer_err[i];
+        int32_t v = _link_steer_delay[i];
         uint8_t j = i;
-        while (j > 0 && _link_steer_err[j - 1] > v)
+        while (j > 0 && _link_steer_delay[j - 1] > v)
         {
-            _link_steer_err[j] = _link_steer_err[j - 1];
+            _link_steer_delay[j] = _link_steer_delay[j - 1];
             j--;
         }
-        _link_steer_err[j] = v;
+        _link_steer_delay[j] = v;
     }
-    int32_t shift = _link_steer_err[DONGLE_LINK_STEER_RANK];
+    const uint8_t rank = (uint8_t)(DONGLE_LINK_STEER_SAMPLES - 1u -
+                                   (DONGLE_LINK_STEER_SAMPLES * DONGLE_LINK_STEER_LATE_PCT) / 100u);
+    int32_t budget = _link_steer_delay[rank] - _link_steer_delay[0];
+    const int32_t budget_max = (int32_t)period - 2 * (int32_t)DONGLE_LINK_STEER_LEAD_US;
+    if (budget > budget_max)
+    {
+        budget = budget_max; /* more spread than a period: keep the fastest ones on time */
+    }
+
+    /* When the window's first report would have arrived that late, against the sends: sends
+     * repeat every USB period, a whole number of our periods, so one comes up every period */
+    const uint32_t planned = _link_steer_t0 + (uint32_t)_link_steer_delay[0] + (uint32_t)budget;
+    const int32_t since = (int32_t)(planned - (uint32_t)mark_us);
+    const int32_t phase = ((since % (int32_t)period) + (int32_t)period) % (int32_t)period;
+    int32_t shift = (int32_t)period - phase - (int32_t)DONGLE_LINK_STEER_LEAD_US; /* > 0: could come later */
+    if (shift > (int32_t)(period / 2u))
+    {
+        shift -= (int32_t)period;
+    }
     if (shift < (int32_t)DONGLE_LINK_STEER_DEADBAND_US && shift > -(int32_t)DONGLE_LINK_STEER_DEADBAND_US)
     {
         return;
     }
 
-    /* Big moves in steps: the error is measured again after each one */
+    /* Big moves in steps: the delays are measured again after each one */
     const int32_t limit = (int32_t)(period / 4u);
     if (shift > limit) shift = limit;
     if (shift < -limit) shift = -limit;
@@ -704,7 +730,7 @@ bool dongle_api_host_link_get_host(dongle_link_host_s *out)
     return true;
 }
 
-void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len)
+void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len, uint16_t seq)
 {
     dongle_pkt_s pkt = {0};
     if (!payload || !dongle_link_untrim_report(payload, len, pkt.data, &pkt.len))
@@ -713,7 +739,7 @@ void dongle_api_host_link_rx_report(const uint8_t *payload, uint16_t len)
     }
     pkt.id = DONGLE_PID_CORE_UNRELIABLE;
     _host_wlan_send_to_transport(&pkt);
-    _host_link_steer_sample(dongle_api_hook_get_time_us_u64());
+    _host_link_steer_sample(dongle_api_hook_get_time_us_u64(), seq);
 }
 
 void dongle_api_host_link_rx_bulk(const uint8_t *data, uint16_t len)

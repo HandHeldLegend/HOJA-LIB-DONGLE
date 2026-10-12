@@ -86,18 +86,22 @@ typedef struct
 
 /*
  * Timing: the dongle sends the console a report on its own clock (every USB poll period it
- * picks up the newest one). It measures how long before each send the gamepad's reports
- * arrive and moves the gamepad's report clock (DONGLE_LINK_MSG_TIMING) so that all but the
- * latest quarter of them arrive at least DONGLE_LINK_STEER_LEAD_US early: late enough to be
- * fresh, early enough not to miss the send. The rest are mostly radio resends, a slot pair
- * (1.25 ms) or more late; a host that polls faster than the send period gets them at its
- * next poll instead (see the dongle's USB transport).
+ * picks up the newest one), and the console should get one new report at every send.
+ * The gamepad's reports leave on a steady clock but arrive with a spread: its own task
+ * loop, and radio resends a slot pair (1.25 ms) or more late. The link's sequence numbers
+ * say when each report would have arrived with no delay at all; the dongle measures every
+ * report's delay over that, and moves the gamepad's report clock (DONGLE_LINK_MSG_TIMING)
+ * so that a report delayed as much as all but the slowest DONGLE_LINK_STEER_LATE_PCT
+ * percent still arrives DONGLE_LINK_STEER_LEAD_US before its send. That is a small jitter
+ * buffer: every report waits for its send, so the console sees one per period, evenly.
+ * A report later than that (rare) goes out at the host's next poll if it polls faster
+ * than the send period (see the dongle's USB transport).
  */
-#define DONGLE_LINK_STEER_LEAD_US     150u /* margin before the send, for the latest quarter */
-#define DONGLE_LINK_STEER_RANK        (DONGLE_LINK_STEER_SAMPLES / 4u) /* the arrival steered */
-#define DONGLE_LINK_STEER_SAMPLES     32u  /* arrivals per measurement */
+#define DONGLE_LINK_STEER_LEAD_US     150u /* margin before the send */
+#define DONGLE_LINK_STEER_LATE_PCT    3u   /* reports allowed to miss their send */
+#define DONGLE_LINK_STEER_SAMPLES     64u  /* arrivals per measurement */
 #define DONGLE_LINK_STEER_SETTLE      8u   /* arrivals ignored after a move */
-#define DONGLE_LINK_STEER_DEADBAND_US 100u /* smaller errors are left alone */
+#define DONGLE_LINK_STEER_DEADBAND_US 50u  /* smaller errors are left alone */
 
 /** Report pacing the dongle asks for, per host. */
 #define DONGLE_LINK_INTERVAL_PC_US      2000u /* PC: 500 Hz */
