@@ -158,8 +158,14 @@ typedef struct
  *   [Link address, 6, as shown]
  *
  * and the scan response its name (complete local name) and the user's name from the config app
- * (manufacturer data, company 0xFFFF, up to 20 bytes). A GATT service DONGLE_LINK_CALL_UUID has one
- * writable characteristic DONGLE_LINK_CALL_CMD_UUID:
+ * (manufacturer data, company 0xFFFF, up to 20 bytes). A GATT service DONGLE_LINK_CALL_UUID has a
+ * readable characteristic DONGLE_LINK_CALL_INFO_UUID with the same, for an app that knows the
+ * gamepad's address without an advertisement (its LE address is its Classic one: a gamepad connected
+ * to the PC over Classic can be read at once):
+ *
+ *   [version][mode][flags][Link address, 6][name length][name][user name length][user name]
+ *
+ * and a writable characteristic DONGLE_LINK_CALL_CMD_UUID:
  *
  *   [DONGLE_LINK_CALL_TO_LINK][token, 16]  restart in dongle mode, where Link mode calls the PC it
  *       paired with. The token is the gamepad's own (random, kept), given to the app in Link mode
@@ -172,6 +178,7 @@ typedef struct
  */
 #define DONGLE_LINK_CALL_UUID     "2a16dfe1-6d54-4505-91e8-c617ef490116"
 #define DONGLE_LINK_CALL_CMD_UUID "a210117a-ea18-4571-a927-4e6b5821b7cb"
+#define DONGLE_LINK_CALL_INFO_UUID "c864f062-886b-4079-bfcd-192dbd7a0a8c"
 #define DONGLE_LINK_CALL_VERSION  2u
 #define DONGLE_LINK_CALL_F_LINKED 0x01u /* has a Link pairing (a PC it can be called to) */
 #define DONGLE_LINK_CALL_TO_LINK  1u
