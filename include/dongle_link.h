@@ -170,9 +170,9 @@ typedef struct
  *   [DONGLE_LINK_CALL_TO_LINK][token, 16]  restart in dongle mode, where Link mode calls the PC it
  *       paired with. The token is the gamepad's own (random, kept), given to the app in Link mode
  *       (DONGLE_LINK_MSG_TOKEN); a wrong one is refused. It can only send the gamepad to that PC.
- *   [DONGLE_LINK_CALL_PAIR]  ask to pair: the gamepad pulses blue for DONGLE_LINK_CALL_PAIR_MS and,
- *       if the user holds its pairing combo (without one: Home, or Start without Home) for
- *       DONGLE_LINK_CALL_CONFIRM_MS meanwhile, restarts in dongle mode pairing, findable for Link mode.
+ *   [DONGLE_LINK_CALL_PAIR]  pair: the gamepad restarts in dongle mode pairing, findable for Link
+ *       mode. Only while it isn't connected to a host: one in use refuses (ATT 0x03), so nobody nearby
+ *       can take a gamepad out of a game.
  *
  * UUIDs as written (big-endian); in GATT tables and AD structures they go little-endian.
  */
@@ -183,8 +183,6 @@ typedef struct
 #define DONGLE_LINK_CALL_F_LINKED 0x01u /* has a Link pairing (a PC it can be called to) */
 #define DONGLE_LINK_CALL_TO_LINK  1u
 #define DONGLE_LINK_CALL_PAIR     2u
-#define DONGLE_LINK_CALL_PAIR_MS  10000u
-#define DONGLE_LINK_CALL_CONFIRM_MS 1000u
 #define DONGLE_LINK_CALL_TOKEN_LEN 16u
 
 #define DONGLE_LINK_APP_USAGE_PAGE  0xFF48u /* vendor-defined, 'H' */
