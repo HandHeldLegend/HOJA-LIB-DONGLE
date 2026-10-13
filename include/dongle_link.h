@@ -69,8 +69,8 @@ typedef enum
     DONGLE_LINK_MSG_REPORT = 3, /**< gamepad -> dongle: an input report that must arrive (up to 64 bytes) */
     DONGLE_LINK_MSG_OUTPUT = 4, /**< dongle -> gamepad: an output report from the console (up to 64 bytes) */
     DONGLE_LINK_MSG_CONFIG = 5, /**< both: config app traffic (up to 64 bytes) */
-    DONGLE_LINK_MSG_TIMING = 6, /**< dongle -> gamepad: int16 (little endian), move the report clock by this many us (+ = later) */
-    DONGLE_LINK_MSG_TOKEN  = 7, /**< gamepad -> PC app (Link mode): the call token, 16 bytes (see "Calling it to Link") */
+    DONGLE_LINK_MSG_TIMING = 6, /**< dongle -> gamepad: int16 LE, us to move the report clock (+ later) */
+    DONGLE_LINK_MSG_TOKEN  = 7, /**< gamepad -> PC app: the call token, 16 bytes (see "Calling it to Link") */
 } dongle_link_msg_t;
 
 /** Largest reliable message: type byte plus the largest payload. */
@@ -110,8 +110,8 @@ typedef struct
  * over within one slot pair) leaves the next one waiting, and every report after it a slot
  * pair late, for good. Each report carries the time it was handed to the radio; the dongle
  * sees the wait, and when DONGLE_LINK_QUEUE_RUN reports in a row arrive more than
- * DONGLE_LINK_QUEUE_LATE_US later than the link's quickest, it moves the gamepad's clock a whole period later: one report is skipped
- * and the waiting one goes out on time.
+ * DONGLE_LINK_QUEUE_LATE_US later than the link's quickest, it moves the gamepad's clock a whole
+ * period later: one report is skipped and the waiting one goes out on time.
  */
 #define DONGLE_LINK_QUEUE_LATE_US   900u    /* most of a slot pair: a report was waiting ahead */
 /* A run: a single report can also be late from where the gamepad's clock (which drifts against
@@ -177,13 +177,13 @@ typedef struct
  *
  * UUIDs as written (big-endian); in GATT tables and AD structures they go little-endian.
  */
-#define DONGLE_LINK_CALL_UUID     "2a16dfe1-6d54-4505-91e8-c617ef490116"
-#define DONGLE_LINK_CALL_CMD_UUID "a210117a-ea18-4571-a927-4e6b5821b7cb"
+#define DONGLE_LINK_CALL_UUID      "2a16dfe1-6d54-4505-91e8-c617ef490116"
+#define DONGLE_LINK_CALL_CMD_UUID  "a210117a-ea18-4571-a927-4e6b5821b7cb"
 #define DONGLE_LINK_CALL_INFO_UUID "c864f062-886b-4079-bfcd-192dbd7a0a8c"
-#define DONGLE_LINK_CALL_VERSION  2u
-#define DONGLE_LINK_CALL_F_LINKED 0x01u /* has a Link pairing (a PC it can be called to) */
-#define DONGLE_LINK_CALL_TO_LINK  1u
-#define DONGLE_LINK_CALL_PAIR     2u
+#define DONGLE_LINK_CALL_VERSION   2u
+#define DONGLE_LINK_CALL_F_LINKED  0x01u /* has a Link pairing (a PC it can be called to) */
+#define DONGLE_LINK_CALL_TO_LINK   1u
+#define DONGLE_LINK_CALL_PAIR      2u
 #define DONGLE_LINK_CALL_TOKEN_LEN 16u
 
 #define DONGLE_LINK_APP_USAGE_PAGE  0xFF48u /* vendor-defined, 'H' */
@@ -201,7 +201,8 @@ typedef struct
  * Trim a live input report for the air: writes [full length][bytes up to the last
  * non-zero one] into out and returns the payload length (at least 1).
  */
-static inline uint16_t dongle_link_trim_report(const uint8_t *report, uint16_t len, uint8_t out[DONGLE_LINK_REPORT_MAX])
+static inline uint16_t dongle_link_trim_report(const uint8_t *report, uint16_t len,
+                                               uint8_t out[DONGLE_LINK_REPORT_MAX])
 {
     if (len > 64u)
     {
@@ -224,7 +225,8 @@ static inline uint16_t dongle_link_trim_report(const uint8_t *report, uint16_t l
  * Restore a trimmed live input report: fills report (64 bytes, zero padded) and its
  * full length. False when the payload is malformed.
  */
-static inline bool dongle_link_untrim_report(const uint8_t *payload, uint16_t plen, uint8_t report[64], uint16_t *len)
+static inline bool dongle_link_untrim_report(const uint8_t *payload, uint16_t plen, uint8_t report[64],
+                                             uint16_t *len)
 {
     if (plen < 1u || payload[0] > 64u || (uint16_t)(plen - 1u) > payload[0])
     {
