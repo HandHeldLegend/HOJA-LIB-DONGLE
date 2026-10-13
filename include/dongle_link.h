@@ -70,6 +70,7 @@ typedef enum
     DONGLE_LINK_MSG_OUTPUT = 4, /**< dongle -> gamepad: an output report from the console (up to 64 bytes) */
     DONGLE_LINK_MSG_CONFIG = 5, /**< both: config app traffic (up to 64 bytes) */
     DONGLE_LINK_MSG_TIMING = 6, /**< dongle -> gamepad: int16 (little endian), move the report clock by this many us (+ = later) */
+    DONGLE_LINK_MSG_TOKEN  = 7, /**< gamepad -> PC app (Link mode): the call token, 16 bytes (see "Calling it to Link") */
 } dongle_link_msg_t;
 
 /** Largest reliable message: type byte plus the largest payload. */
@@ -148,6 +149,27 @@ typedef struct
  * A PC keeps a HID device's report descriptor for the device's address, even across unpairing and
  * pairing again: once released, this layout can only change together with Link mode's address.
  */
+/*
+ * Calling it to Link. In its direct Bluetooth modes (SInput, Switch, Wii), a gamepad with a Link
+ * pairing also advertises over Bluetooth LE, so the PC app can see it wherever it is connected and
+ * call it over: the advertisement carries service data for DONGLE_LINK_CALL_UUID,
+ *
+ *   [version u8 = DONGLE_LINK_CALL_VERSION][mode u8: core_reportformat_t][Link address, 6, as shown]
+ *
+ * and a GATT service DONGLE_LINK_CALL_UUID has one writable characteristic DONGLE_LINK_CALL_CMD_UUID.
+ * Writing [DONGLE_LINK_CALL_TO_LINK][token, 16] restarts the gamepad in dongle mode, where Link mode
+ * calls the PC it paired with. The token is the gamepad's own (random, kept), given to the app in
+ * Link mode (DONGLE_LINK_MSG_TOKEN); a wrong one is refused. The call can only send the gamepad to
+ * the PC it is paired with.
+ *
+ * UUIDs as written (big-endian); in GATT tables and AD structures they go little-endian.
+ */
+#define DONGLE_LINK_CALL_UUID     "2a16dfe1-6d54-4505-91e8-c617ef490116"
+#define DONGLE_LINK_CALL_CMD_UUID "a210117a-ea18-4571-a927-4e6b5821b7cb"
+#define DONGLE_LINK_CALL_VERSION  1u
+#define DONGLE_LINK_CALL_TO_LINK  1u
+#define DONGLE_LINK_CALL_TOKEN_LEN 16u
+
 #define DONGLE_LINK_APP_USAGE_PAGE  0xFF48u /* vendor-defined, 'H' */
 #define DONGLE_LINK_APP_USAGE       0x4Cu   /* 'L' */
 #define DONGLE_LINK_APP_REPORT_LIVE 1u
