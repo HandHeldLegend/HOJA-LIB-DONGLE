@@ -9,23 +9,11 @@ extern "C" {
 #endif
 
 /* -------------------------------------------------------------------------- */
-/* HOST API WLAN                                                              */
-/* -------------------------------------------------------------------------- */
-
-void dongle_api_host_wlan_init(const dongle_cfg_host_s *cfg);
-
-void dongle_api_host_wlan_task(void); 
-
-/** Feed one received datagram, with the address it came from. */
-void dongle_api_host_wlan_udp_rx(const dongle_pkt_s *pkt, const uint8_t ip[4]);
-
-/* -------------------------------------------------------------------------- */
 /* HOST API LINK (Bluetooth)                                                  */
 /* -------------------------------------------------------------------------- */
 /*
- * The radio side of a Bluetooth dongle. The platform runs the link (see dongle_link.h)
- * and calls these from its radio core, in place of the WLAN task: they feed the same
- * queues the transport task and the console cores read.
+ * The radio side of the dongle. The platform runs the link (see dongle_link.h) and calls these
+ * from its radio core: they feed the queues the transport task and the console cores read.
  */
 
 /** Reset the link side. cfg gives the board and firmware for the host info (may be NULL). */
@@ -80,9 +68,8 @@ bool dongle_api_host_transport_input_new(void);
  * @brief Pop the next input as a full packet (reliable-first, then unreliable).
  *
  * Uses the same selection logic as dongle_api_host_transport_get_inputreport()
- * but hands back the entire dongle_pkt_s so a core can inspect the id, session,
- * and ack alongside the payload. Consumes from the same queues, so a given
- * report is delivered by exactly one of the two getters.
+ * but hands back the entire dongle_pkt_s (id and payload). Consumes from the same queues, so a
+ * given report is delivered by exactly one of the two getters.
  *
  * @param pkt Destination packet (filled only when true is returned).
  * @return true if a packet with a non-empty payload was available.
@@ -105,9 +92,9 @@ void dongle_api_host_transport_set_player(uint8_t player_number);
 void dongle_api_host_transport_mark_sent(void);
 
 /**
- * @brief Publish what the dongle is plugged into, for the beacon.
+ * @brief Publish what the dongle is plugged into, for the host info.
  *
- * Gamepads that follow the dongle switch to @p host_mode. No beacon goes out until this is
+ * Gamepads that follow the dongle switch to @p host_mode. No host info goes out until this is
  * called; pass DONGLE_HOST_UNKNOWN when nothing was found and gamepads keep their own mode.
  */
 void dongle_api_host_transport_set_detected(dongle_host_kind_t host_kind, dongle_mode_t host_mode);
@@ -124,7 +111,7 @@ void dongle_api_host_transport_get_status(dongle_status_s *out);
 /**
  * @brief Read the current wireless link status.
  *
- * The link state is owned by the wlan task; this getter is the transport-side
+ * The link state is owned by the radio task; this getter is the transport-side
  * consumer view (call it from the transport task's core).
  *
  * @return DONGLE_LINK_UP while a gamepad session is live, else DONGLE_LINK_DOWN.
@@ -138,10 +125,6 @@ bool dongle_api_host_transport_get_gamepad(dongle_wake_s *out);
 /* HOST HOOKS (platform implements the strong versions)                       */
 /* -------------------------------------------------------------------------- */
 
-void dongle_api_host_wlan_hook_udp_tx(const dongle_pkt_s *pkt, uint8_t ip[4], uint16_t port);
-bool dongle_api_host_wlan_hook_ap_bringup(const char *ssid, const char *password, uint8_t ip[4], uint8_t mask[4]);
-
-void dongle_api_host_wlan_hook_reset_network(void);
 
 void dongle_api_host_transport_hook_transport_bringup(const dongle_wake_s *wake);
 void dongle_api_host_transport_hook_transport_teardown(void);

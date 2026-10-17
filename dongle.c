@@ -1,5 +1,3 @@
-#include <stdio.h>
-
 #include <dongle.h>
 #include <dongle_gamepad.h>
 #include <dongle_host.h>
@@ -23,37 +21,4 @@ __attribute__((weak)) uint64_t dongle_api_hook_get_time_us_u64(void)
 __attribute__((weak)) uint16_t dongle_api_hook_get_rand_u16(void)
 {
     return 0;
-}
-
-uint16_t dongle_api_generate_ack(void)
-{
-    static uint16_t last_ack = 0;
-    uint16_t ack = dongle_api_hook_get_rand_u16() & 0xFFFu;
-    if((ack==0) || (ack==last_ack))
-    {
-        ack+=1;
-    }
-    return ack;
-}
-
-void dongle_wlan_format_ssid(const uint8_t pin[4], char *dst, size_t dst_len)
-{
-    if (dst == NULL || dst_len == 0)
-    {
-        return;
-    }
-
-    uint16_t key = dongle_wlan_pin_to_u16(pin);
-    snprintf(dst, dst_len, "HOJA_WLAN_%04u", (unsigned)key);
-}
-
-void dongle_wlan_format_password(const uint8_t pin[4], char *dst, size_t dst_len)
-{
-    if (dst == NULL || dst_len == 0)
-    {
-        return;
-    }
-
-    uint16_t key = dongle_wlan_pin_to_u16(pin);
-    snprintf(dst, dst_len, "HOJA_%04u", (unsigned)key);
 }

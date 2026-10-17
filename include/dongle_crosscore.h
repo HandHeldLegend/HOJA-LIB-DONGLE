@@ -11,7 +11,7 @@
  * @file dongle_crosscore.h
  * @brief Self-contained SPSC snapshot + FIFO templates used by dongle_host.c.
  *
- * The dongle host splits its work across two tasks (a "wlan" radio task and a
+ * The dongle host splits its work across two tasks (a radio task and a
  * "transport" console task) that a platform may pin to two different cores. All
  * state shared between those tasks is passed through one of two strict
  * single-producer / single-consumer (SPSC) primitives generated here:
