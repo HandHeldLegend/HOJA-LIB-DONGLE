@@ -51,6 +51,20 @@ extern "C" {
 /** Name the dongle answers searches with; gamepads look for it as a prefix. */
 #define DONGLE_LINK_NAME "HOJA Dongle"
 
+/*
+ * The dongle's LE beacon, sent while no gamepad is linked: a gamepad looking for its hosts hears it
+ * and calls this dongle straight away, instead of searching for one. Non-connectable advertising
+ * with one manufacturer data structure (company 0xFFFF: no SIG company id):
+ *   [0xFF 0xFF]['H' 'D'][version][the dongle's Classic address, 6 bytes, least significant first]
+ */
+#define DONGLE_LINK_BEACON_COMPANY  0xFFFFu
+#define DONGLE_LINK_BEACON_MAGIC0   'H'
+#define DONGLE_LINK_BEACON_MAGIC1   'D'
+#define DONGLE_LINK_BEACON_VERSION  1u
+#define DONGLE_LINK_BEACON_DATA_LEN 11u /**< the manufacturer data, after its AD type */
+/** 50 ms, in 0.625 ms units: a gamepad listening for 120 ms hears it twice */
+#define DONGLE_LINK_BEACON_INTERVAL 0x0050u
+
 /* Link INPUT report ids (gamepad -> dongle) */
 #define DONGLE_LINK_IN_REPORT 1u /**< live input report of the current mode, trimmed (see above) */
 #define DONGLE_LINK_IN_BULK   2u /**< the gamepad's live WebUSB report for the config app */
