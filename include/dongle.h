@@ -136,6 +136,11 @@ static inline void dongle_session_unpack(uint16_t packed, dongle_session_s *s)
 
 /* dongle_wake_s.flags */
 #define DONGLE_WAKE_FLAG_MODE_FORCED 0x01u /* The gamepad chose its mode instead of following the dongle */
+/* Slippi: each input report also carries the Switch 2 GameCube controller's input after the
+ * adapter's 37 bytes (NS2-LIB-HID's block), so on a Switch 2 the dongle can be that controller */
+#define DONGLE_WAKE_FLAG_NS2GC 0x02u
+#define DONGLE_NS2GC_BLOCK_OFFSET 37u
+#define DONGLE_NS2GC_BLOCK_LEN    11u
 
 #pragma pack(push, 1)
 typedef struct
@@ -204,6 +209,7 @@ typedef struct
 typedef struct
 {
     bool mode_forced; /* Keep this mode rather than follow the dongle's */
+    bool ns2gc;       /* DONGLE_WAKE_FLAG_NS2GC: the input carries the Switch 2 GameCube block */
     uint32_t fw_version;
     dongle_mode_t mode;
     dongle_status_evt_subscription_s evt;

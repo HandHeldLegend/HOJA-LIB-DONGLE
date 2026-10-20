@@ -52,6 +52,7 @@ typedef struct
     uint8_t  name[DONGLE_WAKE_NAME_LEN];
     uint8_t  manufacturer[DONGLE_WAKE_MANUFACTURER_LEN];
     bool     mode_forced;
+    bool     ns2gc;
     bool     mode_pending; /* Asked the platform to change to the dongle's mode */
     uint32_t fw_version;
 
@@ -160,7 +161,8 @@ static void _gamepad_refresh_wake(void)
     _gp.wake.vid = _gp.vid;
     _gp.wake.pid = _gp.pid;
     _gp.wake.protocol = DONGLE_PROTOCOL_VERSION;
-    _gp.wake.flags = _gp.mode_forced ? DONGLE_WAKE_FLAG_MODE_FORCED : 0;
+    _gp.wake.flags = (uint8_t)((_gp.mode_forced ? DONGLE_WAKE_FLAG_MODE_FORCED : 0) |
+                               (_gp.ns2gc ? DONGLE_WAKE_FLAG_NS2GC : 0));
     _gp.wake.fw_version = _gp.fw_version;
     memcpy(_gp.wake.name, _gp.name, sizeof(_gp.wake.name));
     memcpy(_gp.wake.manufacturer, _gp.manufacturer, sizeof(_gp.wake.manufacturer));
@@ -268,6 +270,7 @@ void dongle_api_gamepad_link_init(const dongle_cfg_gamepad_s *cfg)
         _gp.pid = cfg->pid;
         _gp.evt = cfg->evt;
         _gp.mode_forced = cfg->mode_forced;
+        _gp.ns2gc = cfg->ns2gc;
         _gp.fw_version = cfg->fw_version;
         memcpy(_gp.name, cfg->name, sizeof(_gp.name));
         memcpy(_gp.manufacturer, cfg->manufacturer, sizeof(_gp.manufacturer));
