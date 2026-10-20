@@ -81,6 +81,7 @@ typedef enum
     DONGLE_BOARD_HOJA    = 1,
     DONGLE_BOARD_PICO_W  = 2,
     DONGLE_BOARD_PICO2_W = 3,
+    DONGLE_BOARD_RP2350B_PLUS_W = 4, // Waveshare RP2350B-Plus-W
 } dongle_board_t;
 
 /* What the dongle found itself plugged into */
