@@ -138,7 +138,12 @@ typedef struct
  * the computer's 2 ms polls would get two and some none. One per slot pair puts a new report
  * in every poll, at most a slot pair old. */
 #define DONGLE_LINK_INTERVAL_PC_US      1250u
-#define DONGLE_LINK_INTERVAL_DEFAULT_US 4000u /* Switch and consoles: 250 Hz */
+#define DONGLE_LINK_INTERVAL_DEFAULT_US 4000u /* Consoles: 250 Hz */
+/* The Switch mode, on any host: a Pro Controller's 8 ms over USB. Each report's motion covers the
+ * gyro samples since the last one, so every report has to reach the host, once: faster than the
+ * host takes them and the dongle overwrites some (their samples are lost); faster than the
+ * gamepad's motion samples and reports repeat the last one's (counted twice) */
+#define DONGLE_LINK_INTERVAL_SWITCH_US  8000u
 
 
 /**

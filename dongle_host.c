@@ -482,8 +482,11 @@ bool dongle_api_host_link_get_host(dongle_link_host_s *out)
     out->info.host_kind  = detect.host_kind;
     out->info.host_mode  = (detect.host_kind == DONGLE_HOST_UNKNOWN) ? DONGLE_MODE_UNKNOWN : detect.host_mode;
     out->info.fw_version = _host_fw_version;
-    out->report_interval_us = (detect.host_kind == DONGLE_HOST_PC) ? _link_pc_interval_us
-                                                                     : DONGLE_LINK_INTERVAL_DEFAULT_US;
+    if (out->info.host_mode == DONGLE_MODE_SWITCH)
+        out->report_interval_us = DONGLE_LINK_INTERVAL_SWITCH_US;
+    else
+        out->report_interval_us = (detect.host_kind == DONGLE_HOST_PC) ? _link_pc_interval_us
+                                                                         : DONGLE_LINK_INTERVAL_DEFAULT_US;
 
     /* The gamepad paces with this from now on: measure afresh */
     if (_link_interval_us != out->report_interval_us)
