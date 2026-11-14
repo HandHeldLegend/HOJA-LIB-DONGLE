@@ -132,6 +132,11 @@ __attribute__((weak)) void dongle_api_gamepad_hook_config_rx(const uint8_t data[
     (void)len;
 }
 
+// Implement stopping the config app's live report
+__attribute__((weak)) void dongle_api_gamepad_hook_app_unread(void)
+{
+}
+
 /* -------------------------------------------------------------------------- */
 /* GAMEPAD APP                                                                */
 /* -------------------------------------------------------------------------- */
@@ -412,6 +417,9 @@ void dongle_api_gamepad_link_rx_msg(const uint8_t *msg, uint16_t len)
             memcpy(&delta, payload, sizeof(delta));
             dongle_api_gamepad_hook_shift_reports(delta);
         }
+        break;
+    case DONGLE_LINK_MSG_UNREAD:
+        dongle_api_gamepad_hook_app_unread();
         break;
     default:
         break; /* WAKE and REPORT only go the other way */

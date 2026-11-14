@@ -84,6 +84,7 @@ typedef enum
     DONGLE_LINK_MSG_OUTPUT = 4, /**< dongle -> gamepad: an output report from the console (up to 64 bytes) */
     DONGLE_LINK_MSG_CONFIG = 5, /**< both: config app traffic (up to 64 bytes) */
     DONGLE_LINK_MSG_TIMING = 6, /**< dongle -> gamepad: int16 LE, us to move the report clock (+ later) */
+    DONGLE_LINK_MSG_UNREAD = 7, /**< dongle -> gamepad: no payload, nothing reads the config app's traffic */
 } dongle_link_msg_t;
 
 /** Largest reliable message: type byte plus the largest payload. */
@@ -131,6 +132,17 @@ typedef struct
  * the radio's) has moved its hand-over in the slot pair, with nothing waiting */
 #define DONGLE_LINK_QUEUE_RUN       3u
 #define DONGLE_LINK_QUEUE_WINDOW_US 500000u /* the quickest wait is taken over this long, twice */
+
+/*
+ * The config app's live report. Once the app has sent a command the gamepad streams its live
+ * WebUSB report (DONGLE_LINK_IN_BULK) until told to stop, and at one report per slot pair that
+ * report takes the place of an input report. The app always has a read waiting on the dongle's
+ * WebUSB IN endpoint while it is open; a packet that cannot leave for DONGLE_LINK_UNREAD_MS means
+ * nothing reads (the app closed, or the host is a console). The dongle then sends
+ * DONGLE_LINK_MSG_UNREAD, again on every link up until the app's next command, and the gamepad
+ * stops the stream. The app's next command starts it again.
+ */
+#define DONGLE_LINK_UNREAD_MS 1000u
 
 /** Report pacing the dongle asks for, per host. */
 /* PC: every slot pair (Bluetooth Classic's 1.25 ms grid). Reports cross the air on that

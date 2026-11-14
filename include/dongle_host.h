@@ -83,6 +83,10 @@ bool dongle_api_host_transport_send_config(const uint8_t *data, uint16_t len);
  *  live input report. False when there is nothing new. */
 bool dongle_api_host_transport_get_config(uint8_t data[64], uint16_t *len);
 
+/** Whether the config app reads the dongle's WebUSB (see DONGLE_LINK_UNREAD_MS): false tells the
+ *  gamepad to stop its live report, now and on every link up, until this is set true again. */
+void dongle_api_host_transport_set_app_reading(bool reading);
+
 void dongle_api_host_transport_set_rumble(uint8_t left, uint8_t right, uint8_t brake_left, uint8_t brake_right);
 
 void dongle_api_host_transport_set_transport(bool connected);

@@ -275,6 +275,10 @@ static uint8_t  _link_steer_skip;
 static bool     _link_steer_due;
 static int16_t  _link_steer_shift;
 
+/* The config app (see DONGLE_LINK_UNREAD_MS): set by the transport task, sent by the link */
+static atomic_bool _link_app_reading = true;
+static atomic_bool _link_unread_due = false;
+
 /* The gamepad's radio queue (see dongle_link.h): each report's wait, against the quickest */
 static bool     _link_queue_have_cur;
 static bool     _link_queue_have_prev;
@@ -462,6 +466,8 @@ void dongle_api_host_link_set_up(bool up)
     {
         _link_tx_have = false;
     }
+    /* A gamepad that connects again may still be streaming from before */
+    atomic_store(&_link_unread_due, up && !atomic_load(&_link_app_reading));
     _link_tx_peeked = 0;
     _link_interval_us = 0;
     _host_link_steer_reset();
@@ -571,6 +577,14 @@ bool dongle_api_host_link_peek_msg(uint8_t msg[DONGLE_LINK_MSG_MAX], uint16_t *l
         _link_tx_peeked = DONGLE_LINK_MSG_TIMING;
         return true;
     }
+    /* Ahead of the queue: an app command queued after it starts the stream again */
+    if (atomic_load(&_link_unread_due))
+    {
+        msg[0] = DONGLE_LINK_MSG_UNREAD;
+        *len = 1u;
+        _link_tx_peeked = DONGLE_LINK_MSG_UNREAD;
+        return true;
+    }
     if (!_link_tx_have)
     {
         if (!dongle_fifo_packet_pop(&_reliable_tx_host_ss, &_link_tx_pending))
@@ -597,6 +611,10 @@ void dongle_api_host_link_msg_sent(void)
         _link_steer_due = false;
         _link_steer_n = 0;
         _link_steer_skip = DONGLE_LINK_STEER_SETTLE;
+    }
+    else if (_link_tx_peeked == DONGLE_LINK_MSG_UNREAD)
+    {
+        atomic_store(&_link_unread_due, false);
     }
     else if (_link_tx_peeked)
     {
@@ -673,6 +691,16 @@ bool dongle_api_host_transport_send_config(const uint8_t *data, uint16_t len)
     pkt.len = len;
     memcpy(pkt.data, data, len);
     return dongle_fifo_packet_push(&_reliable_tx_host_ss, &pkt);
+}
+
+void dongle_api_host_transport_set_app_reading(bool reading)
+{
+    /* Only on the change: the app's command clears a stop not sent yet */
+    if (atomic_exchange(&_link_app_reading, reading) != reading)
+    {
+        atomic_store(&_link_unread_due, !reading &&
+                                            dongle_api_host_transport_get_link_status() == DONGLE_LINK_UP);
+    }
 }
 
 bool dongle_api_host_transport_get_config(uint8_t data[64], uint16_t *len)

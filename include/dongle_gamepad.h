@@ -120,6 +120,10 @@ void dongle_api_gamepad_hook_set_rumble(uint8_t left, uint8_t right, uint8_t lef
 /** A WebUSB packet from the config app, through the dongle. */
 void dongle_api_gamepad_hook_config_rx(const uint8_t data[64], uint16_t len);
 
+/** Nothing reads the config app's traffic at the dongle (DONGLE_LINK_MSG_UNREAD): stop the live
+ *  WebUSB report until the app's next command (it arrives after this, through hook_config_rx). */
+void dongle_api_gamepad_hook_app_unread(void);
+
 #ifdef __cplusplus
 }
 #endif
